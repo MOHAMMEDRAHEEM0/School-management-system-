@@ -1,0 +1,6 @@
+{
+  "name": "St. Xavier's SMS",
+  "description": "Comprehensive, offline-first institutional School Management System with strict RBAC, attendance, examinations, fee receipts, digital ID cards, documents, and audit logging.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

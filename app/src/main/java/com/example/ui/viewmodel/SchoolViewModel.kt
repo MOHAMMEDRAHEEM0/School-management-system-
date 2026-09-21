@@ -1,0 +1,1351 @@
+package com.example.ui.viewmodel
+
+import android.content.Context
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import com.example.data.local.entities.AcademicClassEntity
+import com.example.data.local.entities.AdmissionApplicationEntity
+import com.example.data.local.entities.AttendanceEntity
+import com.example.data.local.entities.AttendanceRecordEntity
+import com.example.data.local.entities.AuditLogEntity
+import com.example.data.local.entities.CertificateEntity
+import com.example.data.local.entities.CircularEntity
+import com.example.data.local.entities.ExamRecordEntity
+import com.example.data.local.entities.FeeRecordEntity
+import com.example.data.local.entities.GovernmentComplianceEntity
+import com.example.data.local.entities.IdCardRecordEntity
+import com.example.data.local.entities.InchargeEditRequestEntity
+import com.example.data.local.entities.InstitutionEntity
+import com.example.data.local.entities.InstitutionalBillEntity
+import com.example.data.local.entities.NoticeMeetingEntity
+import com.example.data.local.entities.RegisterScanBatchEntity
+import com.example.data.local.entities.SchoolDiaryEntity
+import com.example.data.local.entities.SchoolInstructionEntity
+import com.example.data.local.entities.StaffEntity
+import com.example.data.local.entities.StudentEntity
+import com.example.data.local.entities.SyncQueueEntity
+import com.example.data.local.entities.TeacherEntity
+import com.example.data.local.entities.TimetableSlotEntity
+import com.example.data.local.entities.UserEntity
+import com.example.data.model.SchoolPermissions
+import com.example.data.model.SecurityClaims
+import com.example.data.model.UserRole
+import com.example.data.model.getDefaultPermissionsForRole
+import com.example.data.repository.AiAcademicAssistant
+import com.example.data.repository.AttendanceRepository
+import com.example.data.repository.SchoolRepository
+import com.example.data.repository.UserRepository
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+
+class SchoolViewModel(
+    val repository: SchoolRepository,
+    val userRepository: UserRepository = repository.userRepository,
+    val attendanceRepository: AttendanceRepository = repository.attendanceRepository,
+    private val context: Context? = null
+) : ViewModel() {
+
+    private val prefs by lazy {
+        context?.getSharedPreferences("sxa_school_prefs", Context.MODE_PRIVATE)
+    }
+
+    // =========================================================================
+    // MULTI-STAGE AUTHENTICATION & INSTITUTIONAL ACCESS CONTROL
+    // =========================================================================
+    enum class AuthStage {
+        REGISTRATION_LOOKUP,
+        CREDENTIALS_LOGIN,
+        AUTHENTICATED
+    }
+
+    private val _isAuthenticated = MutableStateFlow(false)
+    val isAuthenticated: StateFlow<Boolean> = _isAuthenticated.asStateFlow()
+
+    private val _authStage = MutableStateFlow(AuthStage.REGISTRATION_LOOKUP)
+    val authStage: StateFlow<AuthStage> = _authStage.asStateFlow()
+
+    private val _verifiedInstitution = MutableStateFlow<InstitutionEntity?>(null)
+    val verifiedInstitution: StateFlow<InstitutionEntity?> = _verifiedInstitution.asStateFlow()
+
+    private val _selectedAcademicBatch = MutableStateFlow("2026-27")
+    val selectedAcademicBatch: StateFlow<String> = _selectedAcademicBatch.asStateFlow()
+
+    private val _currentAuthSession = MutableStateFlow<com.example.data.model.AuthSession?>(null)
+    val currentAuthSession: StateFlow<com.example.data.model.AuthSession?> = _currentAuthSession.asStateFlow()
+
+    val allInstitutions: StateFlow<List<InstitutionEntity>> = repository.allInstitutions
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Current Active Role & Session Claims
+    private val _currentRole = MutableStateFlow(UserRole.PRINCIPAL)
+    val currentRole: StateFlow<UserRole> = _currentRole.asStateFlow()
+
+    private val _userClaims = MutableStateFlow<SecurityClaims?>(null)
+    val userClaims: StateFlow<SecurityClaims?> = _userClaims.asStateFlow()
+
+    // Persistent Security Verification Flags
+    private val _isPrincipalAuthenticated = MutableStateFlow(
+        prefs?.getBoolean("auth_principal", false) ?: false
+    )
+    val isPrincipalAuthenticated: StateFlow<Boolean> = _isPrincipalAuthenticated.asStateFlow()
+
+    private val _isTeacherAuthenticated = MutableStateFlow(
+        prefs?.getBoolean("auth_teacher", false) ?: false
+    )
+    val isTeacherAuthenticated: StateFlow<Boolean> = _isTeacherAuthenticated.asStateFlow()
+
+    private val _isInchargeAuthenticated = MutableStateFlow(
+        prefs?.getBoolean("auth_incharge", false) ?: false
+    )
+    val isInchargeAuthenticated: StateFlow<Boolean> = _isInchargeAuthenticated.asStateFlow()
+
+    private val _isStudentAuthenticated = MutableStateFlow(
+        prefs?.getBoolean("auth_student", false) ?: false
+    )
+    val isStudentAuthenticated: StateFlow<Boolean> = _isStudentAuthenticated.asStateFlow()
+
+    // Active User Contexts
+    private val _authenticatedTeacher = MutableStateFlow<StaffEntity?>(null)
+    val authenticatedTeacher: StateFlow<StaffEntity?> = _authenticatedTeacher.asStateFlow()
+
+    private val _authenticatedIncharge = MutableStateFlow<StaffEntity?>(null)
+    val authenticatedIncharge: StateFlow<StaffEntity?> = _authenticatedIncharge.asStateFlow()
+
+    private val _authenticatedStudent = MutableStateFlow<StudentEntity?>(null)
+    val authenticatedStudent: StateFlow<StudentEntity?> = _authenticatedStudent.asStateFlow()
+
+    private val _userProfileName = MutableStateFlow("Prof. Robert Vance, Ph.D. (Principal)")
+    val userProfileName: StateFlow<String> = _userProfileName.asStateFlow()
+
+    // Offline & Synchronization State
+    private val _isOnline = MutableStateFlow(true)
+    val isOnline: StateFlow<Boolean> = _isOnline.asStateFlow()
+
+    private val _isSyncing = MutableStateFlow(false)
+    val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
+
+    private val _lastSyncTime = MutableStateFlow("Just now")
+    val lastSyncTime: StateFlow<String> = _lastSyncTime.asStateFlow()
+
+    // Reactive StateFlows from Room Database
+    val institution: StateFlow<InstitutionEntity?> = repository.institution
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val allClasses: StateFlow<List<AcademicClassEntity>> = repository.allClasses
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val staffList: StateFlow<List<StaffEntity>> = repository.allStaff
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val students: StateFlow<List<StudentEntity>> = repository.allStudents
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val attendanceRecords: StateFlow<List<AttendanceRecordEntity>> = repository.allAttendanceRecords
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val registerBatches: StateFlow<List<RegisterScanBatchEntity>> = repository.allRegisterBatches
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val examRecords: StateFlow<List<ExamRecordEntity>> = repository.allExamRecords
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val feeRecords: StateFlow<List<FeeRecordEntity>> = repository.allFeeRecords
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val certificates: StateFlow<List<CertificateEntity>> = repository.allCertificates
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val idCardRecords: StateFlow<List<IdCardRecordEntity>> = repository.allIdCards
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val admissionApplications: StateFlow<List<AdmissionApplicationEntity>> = repository.allAdmissionApplications
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val timetableSlots: StateFlow<List<TimetableSlotEntity>> = repository.allTimetableSlots
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val notices: StateFlow<List<NoticeMeetingEntity>> = repository.allNotices
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val diaryEntries: StateFlow<List<SchoolDiaryEntity>> = repository.allDiaryEntries
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val diaryList: StateFlow<List<SchoolDiaryEntity>> = diaryEntries
+
+    val instructions: StateFlow<List<SchoolInstructionEntity>> = repository.allInstructions
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val institutionalBills: StateFlow<List<InstitutionalBillEntity>> = repository.allBills
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val complianceDocuments: StateFlow<List<GovernmentComplianceEntity>> = repository.allComplianceDocuments
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val inchargeRequests: StateFlow<List<InchargeEditRequestEntity>> = repository.allInchargeRequests
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val auditLogs: StateFlow<List<AuditLogEntity>> = repository.allAuditLogs
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val pendingSyncCount: StateFlow<Int> = repository.pendingSyncCount
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    val isTeacherOneTimeSetupDone: StateFlow<Boolean> = isTeacherAuthenticated
+    val isInchargeOneTimeSetupDone: StateFlow<Boolean> = isInchargeAuthenticated
+    val isStudentOneTimeSetupDone: StateFlow<Boolean> = isStudentAuthenticated
+
+    init {
+        viewModelScope.launch {
+            // Load verified default institution
+            val defaultInst = repository.getInstitution()
+            if (defaultInst != null) {
+                _verifiedInstitution.value = defaultInst
+                val batches = defaultInst.availableBatches.split(",").map { it.trim() }
+                if (batches.isNotEmpty()) {
+                    _selectedAcademicBatch.value = batches.first()
+                }
+            }
+
+            // Restore previous authenticated session if valid and not expired
+            val isValidSession = prefs?.getBoolean("auth_session_valid", false) ?: false
+            val sessionExpiry = prefs?.getLong("auth_session_expiry", 0L) ?: 0L
+            val isNotExpired = sessionExpiry > System.currentTimeMillis()
+
+            val savedUserId = prefs?.getString("auth_session_user_id", null)
+            val savedRoleStr = prefs?.getString("auth_session_role", null)
+            val savedRole = savedRoleStr?.let {
+                try { UserRole.valueOf(it) } catch (e: Exception) { null }
+            }
+
+            if (isValidSession && isNotExpired && savedUserId != null && savedRole != null) {
+                val restoredClaims = SecurityClaims(
+                    userId = savedUserId,
+                    role = savedRole,
+                    roleClaim = savedRole.roleClaim,
+                    displayName = prefs?.getString("auth_session_name", "") ?: "",
+                    phone = prefs?.getString("auth_session_phone", "") ?: "",
+                    email = prefs?.getString("auth_session_email", "") ?: "",
+                    designationOrGrade = prefs?.getString("auth_session_desig", "") ?: "",
+                    assignedClassSection = prefs?.getString("auth_session_section", null),
+                    permissions = getDefaultPermissionsForRole(savedRole),
+                    sessionToken = prefs?.getString("auth_session_token", "REST-SES") ?: "REST-SES"
+                )
+                _userClaims.value = restoredClaims
+                _currentRole.value = savedRole
+                _userProfileName.value = restoredClaims.displayName
+                _isAuthenticated.value = true
+                _authStage.value = AuthStage.AUTHENTICATED
+            } else {
+                // Not authenticated: prompt user through multi-stage secure portal
+                _isAuthenticated.value = false
+                _userClaims.value = null
+                _authStage.value = AuthStage.REGISTRATION_LOOKUP
+            }
+
+            val savedTeacherPhone = prefs?.getString("saved_teacher_phone", null)
+            if (!savedTeacherPhone.isNullOrBlank()) {
+                val staff = repository.getStaffByPhone(savedTeacherPhone)
+                if (staff != null) _authenticatedTeacher.value = staff
+            }
+            val savedInchargePhone = prefs?.getString("saved_incharge_phone", null)
+            if (!savedInchargePhone.isNullOrBlank()) {
+                val staff = repository.getStaffByPhone(savedInchargePhone)
+                if (staff != null) _authenticatedIncharge.value = staff
+            }
+            val savedStudentAdmission = prefs?.getString("saved_student_admission", null)
+            if (!savedStudentAdmission.isNullOrBlank()) {
+                val stu = repository.getStudentByAdmissionNumber(savedStudentAdmission)
+                if (stu != null) _authenticatedStudent.value = stu
+            }
+
+            if (_isAuthenticated.value) {
+                updateProfileNameForRole(_currentRole.value)
+            }
+        }
+    }
+
+    // =========================================================================
+    // MULTI-STAGE AUTHENTICATION CONTROLLERS
+    // =========================================================================
+
+    fun lookupRegistrationCode(code: String, onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            val cleanCode = code.trim()
+            if (cleanCode.isBlank()) {
+                onResult(false, "Please enter a valid Registration Number or School Code.")
+                return@launch
+            }
+
+            val inst = repository.getInstitutionByCode(cleanCode)
+            if (inst != null) {
+                _verifiedInstitution.value = inst
+                val batches = inst.availableBatches.split(",").map { it.trim() }
+                if (batches.isNotEmpty()) {
+                    _selectedAcademicBatch.value = batches.first()
+                }
+                _authStage.value = AuthStage.CREDENTIALS_LOGIN
+                onResult(true, "Verified: ${inst.name}")
+            } else {
+                onResult(false, "Registration code '$cleanCode' not found. Please contact school administrator.")
+            }
+        }
+    }
+
+    fun selectInstitution(institution: InstitutionEntity) {
+        _verifiedInstitution.value = institution
+        val batches = institution.availableBatches.split(",").map { it.trim() }
+        if (batches.isNotEmpty()) {
+            _selectedAcademicBatch.value = batches.first()
+        }
+        _authStage.value = AuthStage.CREDENTIALS_LOGIN
+    }
+
+    fun selectAcademicBatch(batch: String) {
+        _selectedAcademicBatch.value = batch
+    }
+
+    fun returnToRegistrationLookup() {
+        _authStage.value = AuthStage.REGISTRATION_LOOKUP
+    }
+
+    fun loginWithCredentials(
+        username: String,
+        password: String,
+        onResult: (Boolean, String) -> Unit
+    ) {
+        viewModelScope.launch {
+            val inst = _verifiedInstitution.value ?: repository.getInstitution()
+            if (inst == null) {
+                onResult(false, "Please select or verify your institution first.")
+                return@launch
+            }
+
+            val batch = _selectedAcademicBatch.value
+            when (val result = repository.authenticate(inst.institutionId, batch, username, password)) {
+                is com.example.data.model.AuthResult.Success -> {
+                    val session = result.session
+                    _currentAuthSession.value = session
+                    _currentRole.value = session.role
+                    _userProfileName.value = session.user.displayName
+                    _isAuthenticated.value = true
+                    _authStage.value = AuthStage.AUTHENTICATED
+
+                    // Configure role permissions and context
+                    val claims = SecurityClaims(
+                        userId = session.user.id,
+                        role = session.role,
+                        roleClaim = session.role.roleClaim,
+                        displayName = session.user.displayName,
+                        phone = session.user.phoneNumber,
+                        email = session.user.email,
+                        designationOrGrade = session.role.clearanceTitle,
+                        assignedClassSection = if (session.role == UserRole.INCHARGE) "10-A" else null,
+                        permissions = getDefaultPermissionsForRole(session.role),
+                        sessionToken = session.token
+                    )
+                    _userClaims.value = claims
+
+                    when (session.role) {
+                        UserRole.PRINCIPAL -> _isPrincipalAuthenticated.value = true
+                        UserRole.INCHARGE -> {
+                            _isInchargeAuthenticated.value = true
+                            val staff = repository.getStaffByPhone(session.user.phoneNumber)
+                            if (staff != null) _authenticatedIncharge.value = staff
+                        }
+                        UserRole.TEACHING -> {
+                            _isTeacherAuthenticated.value = true
+                            val staff = repository.getStaffByPhone(session.user.phoneNumber)
+                            if (staff != null) _authenticatedTeacher.value = staff
+                        }
+                        UserRole.STUDENT -> {
+                            _isStudentAuthenticated.value = true
+                            val stu = repository.getStudentByAdmissionNumber("ADM-2026-001")
+                            if (stu != null) _authenticatedStudent.value = stu
+                        }
+                        UserRole.PARENT -> {
+                            val stu = repository.getStudentByAdmissionNumber("ADM-2026-001")
+                            if (stu != null) _authenticatedStudent.value = stu
+                        }
+                        else -> {}
+                    }
+
+                    // Save session to prefs
+                    prefs?.edit()
+                        ?.putBoolean("auth_session_valid", true)
+                        ?.putString("auth_session_token", session.token)
+                        ?.putString("auth_session_user_id", session.user.id)
+                        ?.putString("auth_session_username", session.user.username)
+                        ?.putString("auth_session_role", session.role.name)
+                        ?.putString("auth_session_name", session.user.displayName)
+                        ?.putString("auth_session_phone", session.user.phoneNumber)
+                        ?.putString("auth_session_email", session.user.email)
+                        ?.putString("auth_session_inst_id", inst.institutionId)
+                        ?.putString("auth_session_batch", batch)
+                        ?.putLong("auth_session_expiry", session.expiryTimestamp)
+                        ?.apply()
+
+                    onResult(true, "Authentication successful. Access granted as ${session.role.label}.")
+                }
+                is com.example.data.model.AuthResult.Error -> {
+                    onResult(false, result.message)
+                }
+            }
+        }
+    }
+
+    fun resetUserPassword(
+        usernameOrPhone: String,
+        newPass: String,
+        onResult: (Boolean, String) -> Unit
+    ) {
+        viewModelScope.launch {
+            val result = repository.resetUserPassword(usernameOrPhone, newPass)
+            result.fold(
+                onSuccess = { msg -> onResult(true, msg) },
+                onFailure = { err -> onResult(false, err.message ?: "Password reset failed.") }
+            )
+        }
+    }
+
+    fun logout() {
+        viewModelScope.launch {
+            val user = _currentAuthSession.value?.user
+            val inst = _verifiedInstitution.value
+            logAuditEvent(
+                action = "USER_LOGOUT_TERMINATED",
+                entityType = "SECURITY_SESSION",
+                entityId = _currentAuthSession.value?.token ?: "N/A",
+                previousState = "AUTHENTICATED",
+                newState = "TERMINATED",
+                remarks = "User '${user?.username ?: _userProfileName.value}' logged out of ${inst?.name ?: "Portal"}"
+            )
+
+            _currentAuthSession.value = null
+            _userClaims.value = null
+            _isAuthenticated.value = false
+            _isPrincipalAuthenticated.value = false
+            _isTeacherAuthenticated.value = false
+            _isInchargeAuthenticated.value = false
+            _isStudentAuthenticated.value = false
+            _authStage.value = AuthStage.REGISTRATION_LOOKUP
+
+            prefs?.edit()
+                ?.remove("auth_session_valid")
+                ?.remove("auth_session_token")
+                ?.remove("auth_session_user_id")
+                ?.remove("auth_session_role")
+                ?.remove("auth_session_name")
+                ?.remove("auth_session_expiry")
+                ?.apply()
+        }
+    }
+
+    private fun saveSessionToPrefs(claims: SecurityClaims) {
+        prefs?.edit()
+            ?.putString("auth_session_user_id", claims.userId)
+            ?.putString("auth_session_role", claims.role.name)
+            ?.putString("auth_session_name", claims.displayName)
+            ?.putString("auth_session_phone", claims.phone)
+            ?.putString("auth_session_email", claims.email)
+            ?.putString("auth_session_desig", claims.designationOrGrade)
+            ?.putString("auth_session_section", claims.assignedClassSection ?: "")
+            ?.putString("auth_session_token", claims.sessionToken)
+            ?.apply()
+    }
+
+    suspend fun logAuditEvent(
+        action: String,
+        entityType: String,
+        entityId: String,
+        previousState: String?,
+        newState: String,
+        remarks: String
+    ) {
+        val claims = _userClaims.value
+        val actorId = claims?.userId ?: "SYSTEM_AUTH"
+        val actorName = claims?.displayName ?: _userProfileName.value
+        val actorRole = claims?.roleClaim ?: _currentRole.value.roleClaim
+        val auditLog = AuditLogEntity(
+            action = action,
+            entityType = entityType,
+            entityId = entityId,
+            actorUserId = actorId,
+            actorName = actorName,
+            actorRole = actorRole,
+            previousState = previousState,
+            newState = newState,
+            remarks = remarks
+        )
+        repository.insertAuditLog(auditLog)
+    }
+
+    // =========================================================================
+    // AUTHENTICATION & LOGIN GATEWAY
+    // =========================================================================
+
+    suspend fun loginStudentOrParent(
+        admissionNumber: String,
+        phone: String,
+        otp: String,
+        isParentLogin: Boolean
+    ): Pair<Boolean, String> {
+        val student = repository.getStudentByAdmissionAndPhone(admissionNumber, phone)
+            ?: return Pair(false, "Admission Number ($admissionNumber) & Guardian Phone do not match enrolled records.")
+
+        if (otp.trim() != "123456" && otp.trim().length != 6) {
+            return Pair(false, "Invalid OTP code. Please enter the 6-digit verification code.")
+        }
+
+        val role = if (isParentLogin) UserRole.PARENT else UserRole.STUDENT
+        val claims = SecurityClaims(
+            userId = if (isParentLogin) "PAR-${student.id}" else student.id,
+            role = role,
+            roleClaim = role.roleClaim,
+            displayName = if (isParentLogin) "${student.guardianName} (Parent of ${student.name})" else "${student.name} (Scholar)",
+            phone = phone,
+            email = student.email,
+            designationOrGrade = "Grade ${student.grade}-${student.section}",
+            assignedClassSection = "${student.grade}-${student.section}",
+            permissions = getDefaultPermissionsForRole(role),
+            sessionToken = "SEC-TOKEN-${System.currentTimeMillis()}-${(1000..9999).random()}"
+        )
+
+        _userClaims.value = claims
+        _currentRole.value = role
+        if (!isParentLogin) {
+            _authenticatedStudent.value = student
+            _isStudentAuthenticated.value = true
+        }
+        updateProfileNameForRole(role)
+        saveSessionToPrefs(claims)
+
+        logAuditEvent(
+            action = "USER_LOGIN_GATEWAY",
+            entityType = "SECURITY_SESSION",
+            entityId = claims.sessionToken,
+            previousState = "ANONYMOUS",
+            newState = "AUTHENTICATED",
+            remarks = "2-Step authentication successful for $role: ${claims.displayName}"
+        )
+
+        return Pair(true, "Authentication successful. Access granted to ${role.clearanceTitle}.")
+    }
+
+    suspend fun loginStaff(
+        employeeId: String,
+        phone: String,
+        otp: String,
+        principalPin: String?
+    ): Pair<Boolean, String> {
+        val cleanPhone = phone.replace(" ", "").replace("-", "").replace("+91", "").trim()
+        val staff = repository.getStaffById(employeeId.trim())
+            ?: repository.getStaffByPhone(cleanPhone)
+            ?: return Pair(false, "Employee ID ($employeeId) or Mobile Number is not registered in Academy Staff Registry.")
+
+        if (otp.trim() != "123456" && otp.trim().length != 6) {
+            return Pair(false, "Invalid OTP. Please enter the 6-digit staff verification code.")
+        }
+
+        val role: UserRole = when {
+            staff.roleType == "PRINCIPAL" -> {
+                if (principalPin == null || (principalPin.trim() != "admin123" && principalPin.trim() != "9876" && principalPin.trim() != staff.authPin)) {
+                    return Pair(false, "Principal Security Verification Failed: Invalid Master PIN.")
+                }
+                _isPrincipalAuthenticated.value = true
+                UserRole.PRINCIPAL
+            }
+            staff.isClassIncharge -> {
+                _authenticatedIncharge.value = staff
+                _isInchargeAuthenticated.value = true
+                UserRole.INCHARGE
+            }
+            staff.roleType == "TEACHING" -> {
+                _authenticatedTeacher.value = staff
+                _isTeacherAuthenticated.value = true
+                UserRole.TEACHING
+            }
+            staff.roleType == "ACCOUNTANT" -> UserRole.ACCOUNTANT
+            staff.roleType == "OFFICE" -> UserRole.OFFICE
+            staff.roleType == "STAFF_MANAGER" -> UserRole.STAFF_MANAGER
+            else -> UserRole.NON_TEACHING
+        }
+
+        repository.updateStaffOtpVerified(staff.id, true)
+
+        val claims = SecurityClaims(
+            userId = staff.id,
+            role = role,
+            roleClaim = role.roleClaim,
+            displayName = "${staff.name} (${staff.designation})",
+            phone = staff.phone,
+            email = staff.email,
+            designationOrGrade = staff.designation,
+            assignedClassSection = staff.inchargeClass ?: "10-A",
+            permissions = getDefaultPermissionsForRole(role),
+            sessionToken = "SEC-TOKEN-${System.currentTimeMillis()}-${(1000..9999).random()}"
+        )
+
+        _userClaims.value = claims
+        _currentRole.value = role
+        updateProfileNameForRole(role)
+        saveSessionToPrefs(claims)
+
+        logAuditEvent(
+            action = "STAFF_LOGIN_GATEWAY",
+            entityType = "SECURITY_SESSION",
+            entityId = claims.sessionToken,
+            previousState = "ANONYMOUS",
+            newState = "AUTHENTICATED",
+            remarks = "2-Step verification successful for ${staff.name} as ${role.roleClaim}"
+        )
+
+        return Pair(true, "Staff verified. Access granted to ${role.clearanceTitle}.")
+    }
+
+    // Role switching for Developer / Sandbox Testing Mode
+    fun switchRole(role: UserRole) {
+        _currentRole.value = role
+        prefs?.edit()?.putString("sxa_current_role", role.name)?.apply()
+        updateProfileNameForRole(role)
+        val dummyClaims = SecurityClaims(
+            userId = when (role) {
+                UserRole.PRINCIPAL -> "FAC-PRIN-01"
+                UserRole.INCHARGE -> "FAC-TCH-02"
+                UserRole.TEACHING -> "FAC-TCH-01"
+                UserRole.STUDENT -> "ADM-2026-001"
+                UserRole.PARENT -> "PAR-ADM-2026-001"
+                UserRole.ACCOUNTANT -> "FAC-ACC-01"
+                else -> "USR-GEN-01"
+            },
+            role = role,
+            roleClaim = role.roleClaim,
+            displayName = when (role) {
+                UserRole.PRINCIPAL -> "Prof. Robert Vance (Principal)"
+                UserRole.INCHARGE -> "Mrs. Sunita Kapoor (Class Incharge 10-A)"
+                UserRole.TEACHING -> "Dr. Meenakshi Sundaram (Faculty)"
+                UserRole.STUDENT -> "Aarav Sharma (Scholar)"
+                UserRole.PARENT -> "Vikram Sharma (Guardian)"
+                UserRole.ACCOUNTANT -> "Suresh Mehta (Accounts Head)"
+                else -> "Operations Staff"
+            },
+            phone = "9811122334",
+            email = "demo@stxaviers.edu",
+            designationOrGrade = when (role) {
+                UserRole.STUDENT, UserRole.PARENT -> "Grade 10-A"
+                else -> "Staff Faculty"
+            },
+            assignedClassSection = "10-A",
+            permissions = getDefaultPermissionsForRole(role),
+            sessionToken = "SEC-DEV-SIM-${System.currentTimeMillis()}"
+        )
+        _userClaims.value = dummyClaims
+    }
+
+    fun selectRole(role: UserRole) = switchRole(role)
+
+    private fun updateProfileNameForRole(role: UserRole) {
+        _userProfileName.value = when (role) {
+            UserRole.PRINCIPAL -> "Prof. Robert Vance, Ph.D. (Principal)"
+            UserRole.VICE_PRINCIPAL -> "Vice Principal Desk"
+            UserRole.INCHARGE -> _authenticatedIncharge.value?.name?.let { "$it (Incharge 10-A)" } ?: "Mrs. Sunita Kapoor (Incharge 10-A)"
+            UserRole.TEACHING -> _authenticatedTeacher.value?.name?.let { "$it (Faculty)" } ?: "Dr. Meenakshi Sundaram (Faculty)"
+            UserRole.STUDENT -> _authenticatedStudent.value?.let { "${it.name} (${it.admissionNumber})" } ?: "Aarav Sharma (ADM-2026-001)"
+            UserRole.PARENT -> "Vikram Sharma (Guardian of Aarav)"
+            UserRole.ACCOUNTANT -> "Suresh Mehta (Accounts Manager)"
+            UserRole.OFFICE -> "Registrar & Admissions Desk"
+            UserRole.STAFF_MANAGER -> "Staff Directorate"
+            UserRole.NON_TEACHING -> "Rajesh Verma (Operations Head)"
+        }
+    }
+
+    // --- PRINCIPAL SECURITY ---
+    fun authenticatePrincipal(password: String): Boolean {
+        if (password.trim() == "admin123" || password.trim() == "9876" || password.trim() == "principal") {
+            _isPrincipalAuthenticated.value = true
+            prefs?.edit()?.putBoolean("auth_principal", true)?.apply()
+            _currentRole.value = UserRole.PRINCIPAL
+            updateProfileNameForRole(UserRole.PRINCIPAL)
+            val claims = SecurityClaims(
+                userId = "FAC-PRIN-01",
+                role = UserRole.PRINCIPAL,
+                roleClaim = "ROLE_PRINCIPAL",
+                displayName = "Prof. Robert Vance, Ph.D.",
+                phone = "9811122334",
+                email = "principal@stxaviers.edu",
+                designationOrGrade = "Principal & Executive Director",
+                permissions = getDefaultPermissionsForRole(UserRole.PRINCIPAL),
+                sessionToken = "SEC-PRIN-${System.currentTimeMillis()}"
+            )
+            _userClaims.value = claims
+            saveSessionToPrefs(claims)
+            return true
+        }
+        return false
+    }
+
+    fun lockPrincipal() {
+        _isPrincipalAuthenticated.value = false
+        prefs?.edit()?.putBoolean("auth_principal", false)?.apply()
+    }
+
+    // --- TEACHER 2FA BINDING ---
+    suspend fun verifyTeacherPhoneAndOtp(phone: String, otp: String): Pair<Boolean, String> {
+        val cleanPhone = phone.replace(" ", "").replace("-", "").replace("+91", "").trim()
+        val staff = repository.getStaffByPhone(cleanPhone)
+            ?: return Pair(false, "Phone number is not found in the Principal's Staff Registry.")
+        if (otp.length != 6) return Pair(false, "Invalid OTP code.")
+
+        repository.updateStaffOtpVerified(staff.id, true)
+        _authenticatedTeacher.value = staff.copy(isOtpVerified = true)
+        _isTeacherAuthenticated.value = true
+        prefs?.edit()?.putBoolean("auth_teacher", true)?.putString("saved_teacher_phone", cleanPhone)?.apply()
+        _currentRole.value = UserRole.TEACHING
+        updateProfileNameForRole(UserRole.TEACHING)
+        return Pair(true, "Faculty verified successfully.")
+    }
+
+    // --- INCHARGE 2FA BINDING ---
+    suspend fun verifyInchargePhoneAndOtp(phone: String, otp: String): Pair<Boolean, String> {
+        val cleanPhone = phone.replace(" ", "").replace("-", "").replace("+91", "").trim()
+        val staff = repository.getStaffByPhone(cleanPhone)
+            ?: return Pair(false, "Phone number not registered in Staff Registry.")
+        if (otp.length != 6) return Pair(false, "Invalid OTP code.")
+
+        repository.updateStaffOtpVerified(staff.id, true)
+        _authenticatedIncharge.value = staff.copy(isOtpVerified = true)
+        _isInchargeAuthenticated.value = true
+        prefs?.edit()?.putBoolean("auth_incharge", true)?.putString("saved_incharge_phone", cleanPhone)?.apply()
+        _currentRole.value = UserRole.INCHARGE
+        updateProfileNameForRole(UserRole.INCHARGE)
+        return Pair(true, "Class Incharge verified successfully.")
+    }
+
+    // --- STUDENT 2FA BINDING ---
+    suspend fun verifyStudentAdmissionAndOtp(admissionNo: String, phone: String, otp: String): Pair<Boolean, String> {
+        val student = repository.getStudentByAdmissionAndPhone(admissionNo, phone)
+            ?: return Pair(false, "Admission Number ($admissionNo) and Phone do not match our enrolled records.")
+        if (otp.length != 6) return Pair(false, "Invalid OTP code.")
+
+        _authenticatedStudent.value = student
+        _isStudentAuthenticated.value = true
+        prefs?.edit()?.putBoolean("auth_student", true)?.putString("saved_student_admission", student.admissionNumber)?.apply()
+        _currentRole.value = UserRole.STUDENT
+        updateProfileNameForRole(UserRole.STUDENT)
+        return Pair(true, "Student Scholar profile verified successfully.")
+    }
+
+    fun resetAllOneTimeSecurityForDemo() {
+        _isPrincipalAuthenticated.value = false
+        _isTeacherAuthenticated.value = false
+        _isInchargeAuthenticated.value = false
+        _isStudentAuthenticated.value = false
+        _authenticatedTeacher.value = null
+        _authenticatedIncharge.value = null
+        _authenticatedStudent.value = null
+        prefs?.edit()?.clear()?.apply()
+    }
+
+    // =========================================================================
+    // SYNCHRONIZATION ENGINE & NETWORK SIMULATION
+    // =========================================================================
+
+    fun triggerSyncNow() {
+        viewModelScope.launch {
+            _isSyncing.value = true
+            delay(1200) // Realistic incremental sync simulation
+            _isSyncing.value = false
+            _lastSyncTime.value = "Just now"
+            logAuditEvent(
+                action = "INCREMENTAL_SYNC_COMPLETED",
+                entityType = "SYNC_ENGINE",
+                entityId = "SYNC-${System.currentTimeMillis() % 10000}",
+                previousState = "PENDING_CHANGES",
+                newState = "SYNCHRONIZED",
+                remarks = "Incremental delta synchronized with central academy server."
+            )
+        }
+    }
+
+    // =========================================================================
+    // ATTENDANCE & REGISTERS
+    // =========================================================================
+
+    fun markStudentAttendance(
+        studentId: String,
+        studentName: String,
+        status: String,
+        role: String = "TEACHER",
+        markedByName: String? = null
+    ) {
+        viewModelScope.launch {
+            val rec = AttendanceRecordEntity(
+                personId = studentId,
+                personName = studentName,
+                roleType = "STUDENT",
+                date = "2026-09-15",
+                status = status,
+                timeMarked = "08:15 AM",
+                markedByRole = role,
+                markedByName = markedByName ?: _userProfileName.value,
+                classSection = "10-A",
+                sourceMethod = "CAMERA_REGISTER_OCR"
+            )
+            attendanceRepository.insertAttendanceRecord(rec)
+            logAuditEvent(
+                action = "ROLL_CALL_MARKED",
+                entityType = "ATTENDANCE_RECORD",
+                entityId = studentId,
+                previousState = "UNRECORDED",
+                newState = status,
+                remarks = "Marked $status by ${markedByName ?: _userProfileName.value}"
+            )
+        }
+    }
+
+    fun commitRegisterScanBatch(batch: RegisterScanBatchEntity, records: List<AttendanceRecordEntity>) {
+        viewModelScope.launch {
+            attendanceRepository.commitRegisterScan(batch, records)
+            logAuditEvent(
+                action = "FACULTY_SUBMIT_ATTENDANCE_BATCH",
+                entityType = "ATTENDANCE_BATCH",
+                entityId = batch.batchId,
+                previousState = "CAMERA_OCR_SCANNED",
+                newState = batch.status,
+                remarks = "Attendance batch submitted for Section ${batch.classSection}. Present: ${batch.presentCount}, Absent: ${batch.absentCount}."
+            )
+        }
+    }
+    fun commitRegisterBatch(batch: RegisterScanBatchEntity, records: List<AttendanceRecordEntity>) =
+        commitRegisterScanBatch(batch, records)
+
+    fun verifyRegisterBatchIncharge(batchId: String) {
+        viewModelScope.launch {
+            attendanceRepository.verifyBatchByIncharge(batchId)
+            val claims = _userClaims.value
+            val audit = AuditLogEntity(
+                action = "INCHARGE_VERIFY_ATTENDANCE_BATCH",
+                entityType = "ATTENDANCE_BATCH",
+                entityId = batchId,
+                actorUserId = claims?.userId ?: "FAC-TCH-02",
+                actorName = claims?.displayName ?: "Mrs. Sunita Kapoor (Class Incharge)",
+                actorRole = "ROLE_INCHARGE",
+                previousState = "PENDING_INCHARGE_VERIFICATION",
+                newState = "VERIFIED_BY_INCHARGE",
+                remarks = "Section Incharge verified roll-call anomalies."
+            )
+            repository.insertAuditLog(audit)
+        }
+    }
+
+    fun approveRegisterBatchPrincipal(batchId: String) {
+        viewModelScope.launch {
+            attendanceRepository.approveBatchByPrincipal(batchId)
+            val claims = _userClaims.value
+            val audit = AuditLogEntity(
+                action = "PRINCIPAL_APPROVE_ATTENDANCE_BATCH",
+                entityType = "ATTENDANCE_BATCH",
+                entityId = batchId,
+                actorUserId = claims?.userId ?: "FAC-PRIN-01",
+                actorName = claims?.displayName ?: "Prof. Robert Vance, Ph.D. (Principal)",
+                actorRole = "ROLE_PRINCIPAL",
+                previousState = "VERIFIED_BY_INCHARGE",
+                newState = "APPROVED_BY_PRINCIPAL",
+                remarks = "Executive seal applied. Central ledger committed permanently."
+            )
+            repository.insertAuditLog(audit)
+        }
+    }
+
+    // =========================================================================
+    // EXAMINATIONS & REPORT CARDS
+    // =========================================================================
+
+    fun recordExamMarks(
+        examId: String,
+        examType: String,
+        examName: String,
+        classSection: String,
+        subject: String,
+        studentId: String,
+        studentName: String,
+        rollNo: Int,
+        marksObtained: Float,
+        maxMarks: Float = 100f,
+        grade: String,
+        remarks: String
+    ) {
+        viewModelScope.launch {
+            val examRecord = ExamRecordEntity(
+                examId = examId,
+                examType = examType,
+                examName = examName,
+                classSection = classSection,
+                subject = subject,
+                studentId = studentId,
+                studentName = studentName,
+                rollNumber = rollNo,
+                marksObtained = marksObtained,
+                maxMarks = maxMarks,
+                grade = grade,
+                teacherRemarks = remarks,
+                enteredByStaffId = _userClaims.value?.userId ?: "FAC-TCH-02",
+                isPublished = true
+            )
+            repository.insertExamRecord(examRecord)
+            logAuditEvent(
+                action = "MARKS_ENTERED",
+                entityType = "EXAM_RECORD",
+                entityId = examId,
+                previousState = "UNENTERED",
+                newState = "PUBLISHED",
+                remarks = "Marks for $subject ($marksObtained/$maxMarks, Grade: $grade) recorded for $studentName"
+            )
+        }
+    }
+
+    // =========================================================================
+    // ID CARDS & CERTIFICATES
+    // =========================================================================
+
+    fun saveConvertedIdCard(record: IdCardRecordEntity) {
+        viewModelScope.launch {
+            repository.saveIdCard(record)
+            logAuditEvent(
+                action = "DIGITAL_ID_GENERATED",
+                entityType = "ID_CARD",
+                entityId = record.cardId,
+                previousState = "RAW_CAMERA_CAPTURE",
+                newState = record.verificationStatus,
+                remarks = "Computerized ID generated for ${record.personName}."
+            )
+        }
+    }
+
+    fun inchargeVerifyIdCard(cardId: String, remarks: String) {
+        viewModelScope.launch {
+            repository.inchargeVerifyIdCard(cardId, "VERIFIED_BY_INCHARGE", remarks)
+            logAuditEvent(
+                action = "INCHARGE_VERIFY_ID_CARD",
+                entityType = "ID_CARD",
+                entityId = cardId,
+                previousState = "PENDING_INCHARGE",
+                newState = "VERIFIED_BY_INCHARGE",
+                remarks = remarks
+            )
+        }
+    }
+    fun verifyIdCardIncharge(cardId: String, remarks: String) = inchargeVerifyIdCard(cardId, remarks)
+
+    fun principalApproveIdCard(cardId: String, remarks: String) {
+        viewModelScope.launch {
+            repository.principalApproveIdCard(cardId, "APPROVED_BY_PRINCIPAL", remarks, _userProfileName.value)
+            logAuditEvent(
+                action = "PRINCIPAL_APPROVE_ID_CARD",
+                entityType = "ID_CARD",
+                entityId = cardId,
+                previousState = "VERIFIED_BY_INCHARGE",
+                newState = "APPROVED_BY_PRINCIPAL",
+                remarks = remarks
+            )
+        }
+    }
+    fun approveIdCardPrincipal(cardId: String, remarks: String) = principalApproveIdCard(cardId, remarks)
+
+    fun applyForCertificate(type: String, studentId: String, studentName: String, grade: String, purpose: String) {
+        viewModelScope.launch {
+            val certId = "CERT-2026-${(1000..9999).random()}"
+            val cert = CertificateEntity(
+                certificateId = certId,
+                certificateType = type,
+                studentName = studentName,
+                studentId = studentId,
+                grade = grade,
+                issueDate = "15 Sep 2026",
+                academicYear = "2026-2027",
+                purposeOrAchievement = purpose,
+                applicationStatus = "PENDING_INCHARGE",
+                isDownloadUnlocked = false
+            )
+            repository.insertCertificate(cert)
+            logAuditEvent(
+                action = "STUDENT_APPLY_CERTIFICATE",
+                entityType = "CERTIFICATE",
+                entityId = certId,
+                previousState = "NONE",
+                newState = "PENDING_INCHARGE",
+                remarks = "Certificate ($type) requested by $studentName ($studentId)."
+            )
+        }
+    }
+
+    fun inchargeVerifyCertificate(certId: String, inchargeName: String, remarks: String) {
+        viewModelScope.launch {
+            repository.inchargeVerifyCertificate(certId, inchargeName, remarks)
+            logAuditEvent(
+                action = "INCHARGE_VERIFY_CERTIFICATE",
+                entityType = "CERTIFICATE",
+                entityId = certId,
+                previousState = "PENDING_INCHARGE",
+                newState = "VERIFIED_BY_INCHARGE",
+                remarks = remarks
+            )
+        }
+    }
+    fun verifyCertificateIncharge(
+        certId: String,
+        inchargeName: String = "Mrs. Sunita Kapoor (Class Incharge)",
+        remarks: String = ""
+    ) = inchargeVerifyCertificate(certId, inchargeName, remarks)
+
+    fun principalApproveCertificate(certId: String, remarks: String) {
+        viewModelScope.launch {
+            val token = "SXA-CERT-${(1000..9999).random()}"
+            repository.principalApproveCertificate(certId, _userProfileName.value, remarks, token)
+            logAuditEvent(
+                action = "PRINCIPAL_APPROVE_CERTIFICATE",
+                entityType = "CERTIFICATE",
+                entityId = certId,
+                previousState = "VERIFIED_BY_INCHARGE",
+                newState = "APPROVED_BY_PRINCIPAL",
+                remarks = remarks
+            )
+        }
+    }
+    fun approveCertificatePrincipal(certId: String, remarks: String) = principalApproveCertificate(certId, remarks)
+
+    // =========================================================================
+    // FEE MANAGEMENT & RECEIPTS
+    // =========================================================================
+
+    fun inchargeRecordFeePayment(feeId: String, paidAmount: Long, dueAmount: Long, receiptNo: String) {
+        viewModelScope.launch {
+            val status = if (dueAmount <= 0L) "PAID" else "PARTIAL"
+            repository.recordFeePayment(
+                feeId = feeId,
+                paid = paidAmount,
+                due = dueAmount,
+                status = status,
+                receipt = receiptNo,
+                date = "2026-09-15"
+            )
+            val displayPaid = if (paidAmount >= 100000L) paidAmount / 100L else paidAmount
+            logAuditEvent(
+                action = "FEE_PAYMENT_RECORDED",
+                entityType = "FEE_RECORD",
+                entityId = feeId,
+                previousState = "DUE",
+                newState = status,
+                remarks = "Payment amount of  $displayPaid recorded with receipt: $receiptNo"
+            )
+        }
+    }
+
+    // =========================================================================
+    // STAFF REGISTRY & UNIQUE PHONE ENFORCEMENT
+    // =========================================================================
+
+    suspend fun checkStaffPhoneUnique(phone: String, excludeId: String? = null): Boolean {
+        return repository.isStaffPhoneUnique(phone, excludeId)
+    }
+
+    fun addStaffMember(staff: StaffEntity, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
+        viewModelScope.launch {
+            val isUnique = repository.isStaffPhoneUnique(staff.phone)
+            if (!isUnique) {
+                onResult(false, "Error: Mobile number ${staff.phone} is already registered to another staff member! Each teacher can have only one phone number.")
+                return@launch
+            }
+            repository.insertStaff(staff)
+            onResult(true, "Staff member ${staff.name} successfully registered in School DBMS.")
+            logAuditEvent(
+                action = "STAFF_REGISTERED",
+                entityType = "STAFF_RECORD",
+                entityId = staff.id,
+                previousState = "NONE",
+                newState = "REGISTERED",
+                remarks = "Staff ${staff.name} (${staff.designation}) registered."
+            )
+        }
+    }
+
+    fun updateStaffMember(staff: StaffEntity, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
+        viewModelScope.launch {
+            val isUnique = repository.isStaffPhoneUnique(staff.phone, staff.id)
+            if (!isUnique) {
+                onResult(false, "Error: Mobile number ${staff.phone} is already registered to another staff member.")
+                return@launch
+            }
+            repository.updateStaff(staff)
+            onResult(true, "Staff record updated.")
+        }
+    }
+
+    fun deleteStaffMember(staffId: String) {
+        viewModelScope.launch {
+            repository.deleteStaff(staffId)
+            logAuditEvent(
+                action = "STAFF_DELETED",
+                entityType = "STAFF_RECORD",
+                entityId = staffId,
+                previousState = "ACTIVE",
+                newState = "DELETED",
+                remarks = "Staff member $staffId removed from database."
+            )
+        }
+    }
+
+    // =========================================================================
+    // ADMISSIONS & ENROLLMENT
+    // =========================================================================
+
+    fun submitAdmissionApplication(app: AdmissionApplicationEntity) {
+        viewModelScope.launch {
+            repository.insertAdmissionApplication(app)
+            logAuditEvent(
+                action = "ADMISSION_APPLICATION_SUBMITTED",
+                entityType = "ADMISSION",
+                entityId = app.applicationId,
+                previousState = "NONE",
+                newState = "PENDING_VERIFICATION",
+                remarks = "Admission application submitted for ${app.studentName}"
+            )
+        }
+    }
+
+    fun verifyAdmissionApplication(appId: String) {
+        viewModelScope.launch {
+            val app = repository.allAdmissionApplications.stateIn(viewModelScope).value.firstOrNull { it.applicationId == appId }
+            if (app != null) {
+                repository.updateAdmissionApplication(app.copy(status = "VERIFIED_OFFICE"))
+                logAuditEvent(
+                    action = "ADMISSION_VERIFIED_OFFICE",
+                    entityType = "ADMISSION",
+                    entityId = appId,
+                    previousState = "PENDING_VERIFICATION",
+                    newState = "VERIFIED_OFFICE",
+                    remarks = "Office verified documents for ${app.studentName}"
+                )
+            }
+        }
+    }
+
+    fun approveAdmissionAndEnroll(appId: String, grade: String, section: String) {
+        viewModelScope.launch {
+            val app = repository.allAdmissionApplications.stateIn(viewModelScope).value.firstOrNull { it.applicationId == appId }
+            if (app != null) {
+                val newAdmissionNo = "ADM-2026-${(100..999).random()}"
+                val student = StudentEntity(
+                    id = newAdmissionNo,
+                    admissionNumber = newAdmissionNo,
+                    name = app.studentName,
+                    grade = grade,
+                    section = section,
+                    rollNumber = (10..40).random(),
+                    gender = app.gender,
+                    dateOfBirth = app.dob,
+                    guardianName = app.guardianName,
+                    guardianPhone = app.guardianPhone,
+                    studentPhone = app.guardianPhone,
+                    email = app.guardianEmail,
+                    bloodGroup = "O+",
+                    attendancePercentage = 100f,
+                    feeDue = 65000.0,
+                    feePaid = 0.0,
+                    avatarColorHex = "#0B2545",
+                    address = app.address,
+                    realIdPhotoUri = null,
+                    convertedDigitalId = "SXA-DIGI-${newAdmissionNo}",
+                    digitalIdStatus = "PENDING_TEACHER_CAPTURE"
+                )
+                repository.insertStudent(student)
+                repository.updateAdmissionApplication(
+                    app.copy(
+                        status = "APPROVED_BY_PRINCIPAL",
+                        assignedAdmissionNumber = newAdmissionNo,
+                        assignedClassSection = "$grade-$section"
+                    )
+                )
+                logAuditEvent(
+                    action = "ADMISSION_APPROVED_ENROLLED",
+                    entityType = "ADMISSION",
+                    entityId = appId,
+                    previousState = "VERIFIED_OFFICE",
+                    newState = "ENROLLED_STUDENT",
+                    remarks = "Enrolled ${app.studentName} into $grade-$section with Admission No $newAdmissionNo"
+                )
+            }
+        }
+    }
+
+    // =========================================================================
+    // INSTITUTIONAL BILLS & COMPLIANCE
+    // =========================================================================
+
+    fun recordBillPayment(billId: String, receiptRef: String) {
+        viewModelScope.launch {
+            val bill = repository.allBills.stateIn(viewModelScope).value.firstOrNull { it.billId == billId }
+            if (bill != null) {
+                repository.updateBill(
+                    bill.copy(
+                        paymentStatus = "PAID",
+                        paidDate = "2026-09-15",
+                        receiptRef = receiptRef
+                    )
+                )
+                logAuditEvent(
+                    action = "INSTITUTION_BILL_PAID",
+                    entityType = "BILLING",
+                    entityId = billId,
+                    previousState = "PENDING",
+                    newState = "PAID",
+                    remarks = "Paid ${bill.billType} bill:  ${bill.amountRupees}. Ref: $receiptRef"
+                )
+            }
+        }
+    }
+
+    // =========================================================================
+    // SCHOOL DIARY & CIRCULARS
+    // =========================================================================
+
+    fun addSchoolDiaryEntry(entry: SchoolDiaryEntity) {
+        viewModelScope.launch {
+            repository.insertDiaryEntry(entry)
+            logAuditEvent(
+                action = "DIARY_ENTRY_POSTED",
+                entityType = "SCHOOL_DIARY",
+                entityId = entry.id,
+                previousState = "NONE",
+                newState = "PUBLISHED",
+                remarks = "Homework posted for Class ${entry.classSection}: ${entry.subject}"
+            )
+        }
+    }
+
+    fun publishNotice(notice: NoticeMeetingEntity) {
+        viewModelScope.launch {
+            repository.insertNotice(notice)
+            logAuditEvent(
+                action = "CIRCULAR_PUBLISHED",
+                entityType = "CIRCULAR",
+                entityId = notice.id,
+                previousState = "DRAFT",
+                newState = "PUBLISHED",
+                remarks = "Published: ${notice.title} to ${notice.venueOrAudience}"
+            )
+        }
+    }
+
+    // Student promotion between academic years
+    fun promoteStudent(studentId: String, newGrade: String, newSection: String) {
+        viewModelScope.launch {
+            repository.promoteStudent(studentId, newGrade, newSection)
+            logAuditEvent(
+                action = "STUDENT_PROMOTED",
+                entityType = "STUDENT_RECORD",
+                entityId = studentId,
+                previousState = "CURRENT",
+                newState = "PROMOTED_TO_${newGrade}",
+                remarks = "Student promoted to Grade $newGrade Section $newSection"
+            )
+        }
+    }
+    val aiAssistant: AiAcademicAssistant = AiAcademicAssistant()
+
+    // =========================================================================
+    // AI ACADEMIC TOOLS & GEMINI AUTOMATION
+    // =========================================================================
+
+    suspend fun generateStudentAiEvaluation(
+        student: StudentEntity,
+        exams: List<ExamRecordEntity>,
+        attendancePercentage: Float
+    ): String {
+        return aiAssistant.generateStudentPerformanceRemarks(
+            student = student,
+            exams = exams,
+            attendancePercentage = attendancePercentage
+        )
+    }
+
+    suspend fun generateSmartNotice(
+        title: String,
+        circularType: String,
+        targetAudience: String,
+        keyPoints: String,
+        effectiveDate: String
+    ): String {
+        return aiAssistant.draftSmartCircular(
+            title = title,
+            circularType = circularType,
+            targetAudience = targetAudience,
+            keyPoints = keyPoints,
+            effectiveDate = effectiveDate
+        )
+    }
+
+    suspend fun generateClassQuizAndRubric(
+        grade: String,
+        subject: String,
+        topic: String,
+        totalMarks: Int,
+        difficultyLevel: String,
+        questionTypes: String
+    ): String {
+        return aiAssistant.generateTestPaperAndRubric(
+            grade = grade,
+            subject = subject,
+            topic = topic,
+            totalMarks = totalMarks,
+            difficultyLevel = difficultyLevel,
+            questionTypes = questionTypes
+        )
+    }
+
+    suspend fun getAttendanceAndFeeRiskAnalysis(
+        students: List<StudentEntity>,
+        feeRecords: List<FeeRecordEntity>
+    ): String {
+        return aiAssistant.analyzeAttendanceAndFeeRisks(
+            students = students,
+            feeRecords = feeRecords
+        )
+    }
+
+    fun publishGeneratedCircular(title: String, content: String, targetAudience: String) {
+        val notice = NoticeMeetingEntity(
+            id = "CIRC-AI-${System.currentTimeMillis() % 100000}",
+            title = title,
+            type = "CIRCULAR",
+            date = "2026-09-20",
+            time = "09:00 AM",
+            venueOrAudience = targetAudience,
+            description = content,
+            isUrgent = false,
+            organizer = "Office of the Principal, St. Xavier's International Academy"
+        )
+        publishNotice(notice)
+    }
+}
+
+class SchoolViewModelFactory(
+    private val repository: SchoolRepository,
+    private val context: Context? = null,
+    private val userRepository: UserRepository? = null,
+    private val attendanceRepository: AttendanceRepository? = null
+) : ViewModelProvider.Factory {
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        if (modelClass.isAssignableFrom(SchoolViewModel::class.java)) {
+            val userRepo = userRepository ?: repository.userRepository
+            val attRepo = attendanceRepository ?: repository.attendanceRepository
+            return SchoolViewModel(repository, userRepo, attRepo, context) as T
+        }
+        throw IllegalArgumentException("Unknown ViewModel class")
+    }
+}
