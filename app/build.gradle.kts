@@ -7,6 +7,7 @@ plugins {
   alias(libs.plugins.roborazzi)
   alias(libs.plugins.secrets)
   alias(libs.plugins.google.services)
+  alias(libs.plugins.hilt)
 }
 
 android {
@@ -95,7 +96,7 @@ dependencies {
   implementation(libs.androidx.lifecycle.runtime.compose)
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation(libs.androidx.lifecycle.viewmodel.compose)
-  // implementation(libs.androidx.navigation.compose)
+  implementation(libs.androidx.navigation.compose)
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
   // implementation(libs.coil.compose)
@@ -104,12 +105,14 @@ dependencies {
   // Uncomment to use Firestore:
   // implementation(libs.firebase.firestore)
 
-  // Uncomment ALL FOUR of the following dependencies together to use Firebase Auth and Google
-  // Sign-In via Credential Manager:
-  // implementation(libs.firebase.auth)
-  // implementation(libs.androidx.credentials)
-  // implementation(libs.androidx.credentials.play.services)
-  // implementation(libs.googleid)
+  // Firebase Auth, Messaging, Storage and Google Sign-In via Credential Manager:
+  implementation(libs.firebase.auth)
+  implementation(libs.firebase.messaging)
+  implementation(libs.firebase.storage)
+  implementation(libs.androidx.work.runtime.ktx)
+  implementation(libs.androidx.credentials)
+  implementation(libs.androidx.credentials.play.services)
+  implementation(libs.googleid)
   implementation(libs.firebase.appcheck.recaptcha)
   implementation(libs.firebase.appcheck.debug)
   implementation(libs.kotlinx.coroutines.android)
@@ -133,8 +136,32 @@ dependencies {
   androidTestImplementation(libs.androidx.espresso.core)
   androidTestImplementation(libs.androidx.junit)
   androidTestImplementation(libs.androidx.runner)
+  implementation(libs.hilt.android)
+  implementation(libs.androidx.hilt.navigation.compose)
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
   "ksp"(libs.androidx.room.compiler)
   "ksp"(libs.moshi.kotlin.codegen)
+  "ksp"(libs.hilt.compiler)
 }
+
+tasks.register<Zip>("packageApkZip") {
+  description = "Packages the built debug APK into a zip file for easy download"
+  group = "build"
+  dependsOn("assembleDebug")
+  from(layout.buildDirectory.dir("outputs/apk/debug"))
+  include("*.apk")
+  archiveFileName.set("school-management-system-apk.zip")
+  destinationDirectory.set(rootProject.file(".build-outputs"))
+}
+
+tasks.register("buildApk") {
+  description = "Builds debug APK and exports to zip"
+  group = "build"
+  dependsOn("packageApkZip")
+}
+
+afterEvaluate {
+  tasks.findByName("assembleDebug")?.finalizedBy("packageApkZip")
+}
+

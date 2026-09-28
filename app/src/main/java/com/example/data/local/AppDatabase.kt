@@ -8,28 +8,71 @@ import androidx.room.withTransaction
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.data.local.dao.SchoolDao
 import com.example.data.local.entities.AcademicClassEntity
+import com.example.data.local.entities.AcademicPromotionHistoryEntity
+import com.example.data.local.entities.AcademicYearEntity
 import com.example.data.local.entities.AdmissionApplicationEntity
+import com.example.data.local.entities.AiAuditLogEntity
+import com.example.data.local.entities.AttendanceCorrectionEntity
 import com.example.data.local.entities.AttendanceEntity
 import com.example.data.local.entities.AttendanceRecordEntity
 import com.example.data.local.entities.AuditLogEntity
+import com.example.data.local.entities.AutomatedMessageDispatchEntity
+import com.example.data.local.entities.CampusEntity
 import com.example.data.local.entities.CertificateEntity
 import com.example.data.local.entities.CircularEntity
+import com.example.data.local.entities.ClassroomEntity
+import com.example.data.local.entities.CloudDocumentEntity
+import com.example.data.local.entities.DeviceTokenEntity
+import com.example.data.local.entities.DisasterRecoveryBackupEntity
+import com.example.data.local.entities.DurableOutboxEntity
+import com.example.data.local.entities.EmergencyContactEntity
 import com.example.data.local.entities.ExamRecordEntity
+import com.example.data.local.entities.ExamScheduleEntity
+import com.example.data.local.entities.FeatureFlagEntity
+import com.example.data.local.entities.FeeDiscountEntity
+import com.example.data.local.entities.FeeInvoiceEntity
+import com.example.data.local.entities.FeePaymentTransactionEntity
 import com.example.data.local.entities.FeeRecordEntity
+import com.example.data.local.entities.FeeStructureEntity
+import com.example.data.local.entities.FinancialLedgerEntryEntity
 import com.example.data.local.entities.GovernmentComplianceEntity
+import com.example.data.local.entities.GradingSchemeEntity
+import com.example.data.local.entities.HomeworkEntity
+import com.example.data.local.entities.HomeworkSubmissionEntity
 import com.example.data.local.entities.IdCardRecordEntity
 import com.example.data.local.entities.InchargeEditRequestEntity
 import com.example.data.local.entities.InstitutionEntity
 import com.example.data.local.entities.InstitutionalBillEntity
+import com.example.data.local.entities.InventoryItemEntity
+import com.example.data.local.entities.InventoryTransactionEntity
+import com.example.data.local.entities.LibraryBookEntity
+import com.example.data.local.entities.LibraryIssueEntity
 import com.example.data.local.entities.NoticeMeetingEntity
+import com.example.data.local.entities.NotificationPreferenceEntity
+import com.example.data.local.entities.ParentEntity
+import com.example.data.local.entities.ParentWardLinkEntity
+import com.example.data.local.entities.PaymentOrderEntity
+import com.example.data.local.entities.PushNotificationEntity
 import com.example.data.local.entities.RegisterScanBatchEntity
+import com.example.data.local.entities.RolePermissionEntity
 import com.example.data.local.entities.SchoolDiaryEntity
 import com.example.data.local.entities.SchoolInstructionEntity
+import com.example.data.local.entities.SchoolSettingsEntity
+import com.example.data.local.entities.SectionEntity
 import com.example.data.local.entities.StaffEntity
+import com.example.data.local.entities.StaffLeaveRequestEntity
+import com.example.data.local.entities.StudentEnrollmentEntity
 import com.example.data.local.entities.StudentEntity
+import com.example.data.local.entities.StudentLeaveRequestEntity
+import com.example.data.local.entities.SubjectEntity
+import com.example.data.local.entities.SupportTicketEntity
 import com.example.data.local.entities.SyncQueueEntity
+import com.example.data.local.entities.TeacherAssignmentEntity
 import com.example.data.local.entities.TeacherEntity
 import com.example.data.local.entities.TimetableSlotEntity
+import com.example.data.local.entities.TransportPickupPointEntity
+import com.example.data.local.entities.TransportRouteEntity
+import com.example.data.local.entities.TransportVehicleEntity
 import com.example.data.local.entities.UserEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -38,16 +81,34 @@ import kotlinx.coroutines.launch
 @Database(
     entities = [
         InstitutionEntity::class,
+        CampusEntity::class,
+        AcademicYearEntity::class,
         AcademicClassEntity::class,
+        SectionEntity::class,
+        ClassroomEntity::class,
         UserEntity::class,
+        RolePermissionEntity::class,
         TeacherEntity::class,
         StaffEntity::class,
         StudentEntity::class,
+        ParentEntity::class,
+        ParentWardLinkEntity::class,
+        EmergencyContactEntity::class,
+        StudentEnrollmentEntity::class,
+        TeacherAssignmentEntity::class,
         AttendanceEntity::class,
         AttendanceRecordEntity::class,
+        AttendanceCorrectionEntity::class,
+        StaffLeaveRequestEntity::class,
         RegisterScanBatchEntity::class,
         ExamRecordEntity::class,
+        ExamScheduleEntity::class,
+        GradingSchemeEntity::class,
         FeeRecordEntity::class,
+        FeeStructureEntity::class,
+        FeeDiscountEntity::class,
+        FeeInvoiceEntity::class,
+        FeePaymentTransactionEntity::class,
         CertificateEntity::class,
         IdCardRecordEntity::class,
         AdmissionApplicationEntity::class,
@@ -60,9 +121,34 @@ import kotlinx.coroutines.launch
         GovernmentComplianceEntity::class,
         SyncQueueEntity::class,
         InchargeEditRequestEntity::class,
-        AuditLogEntity::class
+        AuditLogEntity::class,
+        HomeworkEntity::class,
+        HomeworkSubmissionEntity::class,
+        StudentLeaveRequestEntity::class,
+        PushNotificationEntity::class,
+        DeviceTokenEntity::class,
+        AiAuditLogEntity::class,
+        SubjectEntity::class,
+        LibraryBookEntity::class,
+        LibraryIssueEntity::class,
+        TransportRouteEntity::class,
+        TransportVehicleEntity::class,
+        TransportPickupPointEntity::class,
+        InventoryItemEntity::class,
+        InventoryTransactionEntity::class,
+        SupportTicketEntity::class,
+        SchoolSettingsEntity::class,
+        FeatureFlagEntity::class,
+        DurableOutboxEntity::class,
+        CloudDocumentEntity::class,
+        NotificationPreferenceEntity::class,
+        DisasterRecoveryBackupEntity::class,
+        AcademicPromotionHistoryEntity::class,
+        PaymentOrderEntity::class,
+        FinancialLedgerEntryEntity::class,
+        AutomatedMessageDispatchEntity::class
     ],
-    version = 5,
+    version = 10,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -276,6 +362,45 @@ abstract class AppDatabase : RoomDatabase() {
 
                 // 3. Pre-fed Core RBAC Users
                 val initialUsers = listOf(
+                    UserEntity(
+                        id = "USR-ADM-01",
+                        institutionId = "INST-SXA-2026",
+                        username = "admin",
+                        email = "admin@stxaviers.edu",
+                        password = "Password@123",
+                        role = "ADMIN",
+                        displayName = "System Administrator (Directorate)",
+                        phoneNumber = "9800000000",
+                        authPin = "9876",
+                        isOtpVerified = true,
+                        permissions = "MANAGE_INSTITUTION,CONFIGURE_ACADEMIC_YEAR,MANAGE_CLASSES,MANAGE_STAFF_DBMS,ASSIGN_TEACHERS,VIEW_ROSTER_ALL,VIEW_AUDIT_LOGS"
+                    ),
+                    UserEntity(
+                        id = "USR-TCH-DEMO",
+                        institutionId = "INST-SXA-2026",
+                        username = "teacher",
+                        email = "teacher@stxaviers.edu",
+                        password = "Password@123",
+                        role = "TEACHER",
+                        displayName = "Mrs. Sunita Kapoor (Faculty & Class In-Charge)",
+                        phoneNumber = "9876543212",
+                        authPin = "1234",
+                        isOtpVerified = true,
+                        permissions = "VIEW_ROSTER_SECTION,MARK_ATTENDANCE_SECTION,SCAN_REGISTER_CAMERA,ENTER_MARKS_ASSIGNED_SUBJECT,WRITE_CLASS_DIARY"
+                    ),
+                    UserEntity(
+                        id = "USR-STU-DEMO",
+                        institutionId = "INST-SXA-2026",
+                        username = "student",
+                        email = "student@stxaviers.edu",
+                        password = "Password@123",
+                        role = "STUDENT",
+                        displayName = "Aarav Sharma (Scholar Roll #1)",
+                        phoneNumber = "9123456781",
+                        authPin = "1234",
+                        isOtpVerified = true,
+                        permissions = "READ_DIARY,VIEW_TIMETABLE_ASSIGNED"
+                    ),
                     UserEntity(
                         id = "USR-SADM-01",
                         institutionId = "INST-SXA-2026",
@@ -1060,6 +1185,196 @@ abstract class AppDatabase : RoomDatabase() {
                     )
                 )
                 dao.insertAuditLogs(initialAuditLogs)
+
+                // 17. Pre-fed Academic Subjects (Grade 10-A)
+                val initialSubjects = listOf(
+                    SubjectEntity(
+                        subjectId = "SUBJ-10A-MATH",
+                        institutionId = "INST-SXA-2026",
+                        classSection = "10-A",
+                        subjectName = "Mathematics & Advanced Calculus",
+                        subjectCode = "MATH-10",
+                        department = "Mathematical Sciences",
+                        facultyStaffId = "FAC-TCH-02",
+                        facultyName = "Mrs. Sunita Kapoor",
+                        weeklyPeriods = 6
+                    ),
+                    SubjectEntity(
+                        subjectId = "SUBJ-10A-PHY",
+                        institutionId = "INST-SXA-2026",
+                        classSection = "10-A",
+                        subjectName = "Physics & Lab Work",
+                        subjectCode = "PHY-10",
+                        department = "Science Division",
+                        facultyStaffId = "FAC-TCH-01",
+                        facultyName = "Dr. Meenakshi Sundaram",
+                        weeklyPeriods = 5
+                    ),
+                    SubjectEntity(
+                        subjectId = "SUBJ-10A-ENG",
+                        institutionId = "INST-SXA-2026",
+                        classSection = "10-A",
+                        subjectName = "English Literature & Composition",
+                        subjectCode = "ENG-10",
+                        department = "Languages & Humanities",
+                        facultyStaffId = "FAC-TCH-03",
+                        facultyName = "David K. Reynolds",
+                        weeklyPeriods = 4
+                    ),
+                    SubjectEntity(
+                        subjectId = "SUBJ-10A-CHEM",
+                        institutionId = "INST-SXA-2026",
+                        classSection = "10-A",
+                        subjectName = "Chemistry & Stoichiometry",
+                        subjectCode = "CHEM-10",
+                        department = "Science Division",
+                        facultyStaffId = "FAC-TCH-01",
+                        facultyName = "Dr. Meenakshi Sundaram",
+                        weeklyPeriods = 4
+                    )
+                )
+                dao.insertSubjects(initialSubjects)
+
+                // 18. Pre-fed Homework & Assignment Management
+                val initialHomework = listOf(
+                    HomeworkEntity(
+                        homeworkId = "HW-10A-MATH-001",
+                        institutionId = "INST-SXA-2026",
+                        academicYear = "2026-2027",
+                        classSection = "10-A",
+                        subject = "Mathematics",
+                        title = "Quadratic Equations & Parabolic Graphs",
+                        description = "Complete exercise 4.2 questions 1 through 10. Show complete derivation and vertex formulas.",
+                        teacherId = "FAC-TCH-02",
+                        teacherName = "Mrs. Sunita Kapoor",
+                        assignedDate = "2026-09-22",
+                        dueDate = "2026-09-26",
+                        maxMarks = 20,
+                        isPublished = true
+                    ),
+                    HomeworkEntity(
+                        homeworkId = "HW-10A-PHY-001",
+                        institutionId = "INST-SXA-2026",
+                        academicYear = "2026-2027",
+                        classSection = "10-A",
+                        subject = "Physics",
+                        title = "Electromagnetic Induction & Faraday Laws",
+                        description = "Write a 500-word laboratory synthesis on Lenz's law with labelled circuit diagrams.",
+                        teacherId = "FAC-TCH-01",
+                        teacherName = "Dr. Meenakshi Sundaram",
+                        assignedDate = "2026-09-23",
+                        dueDate = "2026-09-28",
+                        maxMarks = 25,
+                        isPublished = true
+                    )
+                )
+                dao.insertHomeworkList(initialHomework)
+
+                // Pre-fed Homework Submissions
+                val initialSubmissions = listOf(
+                    HomeworkSubmissionEntity(
+                        submissionId = "SUB-HW-MATH-001",
+                        homeworkId = "HW-10A-MATH-001",
+                        institutionId = "INST-SXA-2026",
+                        studentId = "ADM-2026-001",
+                        studentName = "Aarav Sharma",
+                        classSection = "10-A",
+                        submissionText = "Solved all 10 quadratic equation problems. Discriminant and vertex calculations attached in step-by-step notes.",
+                        submissionTimestamp = System.currentTimeMillis() - 86400000L,
+                        status = "EVALUATED",
+                        marksObtained = 19,
+                        teacherFeedback = "Flawless algebra derivations and tidy graph sketching. Well done!",
+                        gradedAt = System.currentTimeMillis() - 3600000L
+                    ),
+                    HomeworkSubmissionEntity(
+                        submissionId = "SUB-HW-MATH-002",
+                        homeworkId = "HW-10A-MATH-001",
+                        institutionId = "INST-SXA-2026",
+                        studentId = "ADM-2026-002",
+                        studentName = "Ananya Iyer",
+                        classSection = "10-A",
+                        submissionText = "Completed exercises 4.2 with proof of quadratic roots and graphical solutions.",
+                        submissionTimestamp = System.currentTimeMillis() - 72000000L,
+                        status = "SUBMITTED"
+                    )
+                )
+                initialSubmissions.forEach { dao.insertHomeworkSubmission(it) }
+
+                // 19. Pre-fed Configurable Fee Structures
+                val initialFeeStructures = listOf(
+                    FeeStructureEntity(
+                        structureId = "FEE-STR-10-TERM1",
+                        institutionId = "INST-SXA-2026",
+                        academicYear = "2026-2027",
+                        grade = "10",
+                        feeHead = "Composite Tuition & Advanced Science Laboratories",
+                        term = "Term 1 (2026-27)",
+                        amountPaise = 6500000L, //  65,000.00
+                        dueDate = "2026-08-15",
+                        isMandatory = true
+                    ),
+                    FeeStructureEntity(
+                        structureId = "FEE-STR-10-TERM2",
+                        institutionId = "INST-SXA-2026",
+                        academicYear = "2026-2027",
+                        grade = "10",
+                        feeHead = "Composite Tuition & Digital Computer Academy",
+                        term = "Term 2 (2026-27)",
+                        amountPaise = 6500000L, //  65,000.00
+                        dueDate = "2026-11-15",
+                        isMandatory = true
+                    )
+                )
+                dao.insertFeeStructures(initialFeeStructures)
+
+                // 20. Pre-fed Parent-Ward Link (Vikram Sharma linked to Aarav Sharma)
+                val initialParentWardLinks = listOf(
+                    ParentWardLinkEntity(
+                        linkId = "LINK-PAR-01-STU-001",
+                        institutionId = "INST-SXA-2026",
+                        parentUserId = "USR-PAR-01",
+                        studentId = "ADM-2026-001",
+                        studentName = "Aarav Sharma",
+                        relationship = "FATHER",
+                        isPrimaryContact = true
+                    )
+                )
+                dao.insertParentWardLinks(initialParentWardLinks)
+
+                // 21. Pre-fed Push Notifications
+                val initialNotifications = listOf(
+                    PushNotificationEntity(
+                        notificationId = "NOTIF-2026-001",
+                        institutionId = "INST-SXA-2026",
+                        recipientUserId = "ALL",
+                        title = "Term 1 Summative Examination Schedule Released",
+                        body = "Detailed subject-wise date sheet and seating plan are published on the academic board.",
+                        category = "EXAM",
+                        isRead = false,
+                        timestamp = System.currentTimeMillis() - 3600000L * 4
+                    ),
+                    PushNotificationEntity(
+                        notificationId = "NOTIF-2026-002",
+                        institutionId = "INST-SXA-2026",
+                        recipientUserId = "USR-STU-01",
+                        title = "Homework Graded: Mathematics",
+                        body = "Mrs. Sunita Kapoor evaluated your submission for Quadratic Equations. Score: 19/20.",
+                        category = "ANNOUNCEMENT",
+                        isRead = false,
+                        timestamp = System.currentTimeMillis() - 3600000L * 2
+                    ),
+                    PushNotificationEntity(
+                        notificationId = "NOTIF-2026-003",
+                        institutionId = "INST-SXA-2026",
+                        recipientUserId = "USR-PAR-01",
+                        title = "Official Fee Receipt Generated",
+                        body = "Receipt SXA-REC-2026-9901 for Term 1 Composite Tuition has been reconciled successfully.",
+                        category = "FEE_DUE",
+                        isRead = false,
+                        timestamp = System.currentTimeMillis() - 3600000L * 24
+                    )
+                )
+                dao.insertNotifications(initialNotifications)
             }
         }
     }

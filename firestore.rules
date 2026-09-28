@@ -1,0 +1,198 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =========================================================================
+    // PRODUCTION SECURITY HELPER FUNCTIONS
+    // =========================================================================
+
+    function isAuthenticated() {
+      return request.auth != null && request.auth.uid != null;
+    }
+
+    function getAuthUid() {
+      return request.auth.uid;
+    }
+
+    // Tenant claims derived from custom token or verified user token
+    function getTenantId() {
+      return request.auth.token.tenantId;
+    }
+
+    function getUserRole() {
+      return request.auth.token.role;
+    }
+
+    // Asserts active tenant matches document tenant
+    function isTenantMember(institutionId) {
+      return isAuthenticated() && (
+        getTenantId() == institutionId ||
+        request.auth.token.isSuperAdmin == true
+      );
+    }
+
+    function hasRole(role) {
+      return isAuthenticated() && getUserRole() == role;
+    }
+
+    function hasAnyRole(roles) {
+      return isAuthenticated() && (getUserRole() in roles || request.auth.token.isSuperAdmin == true);
+    }
+
+    function isSelf(userId) {
+      return isAuthenticated() && getAuthUid() == userId;
+    }
+
+    // Prevents tampering with tenant ID on creation or update
+    function preservesTenant(institutionId) {
+      return request.resource.data.institutionId == institutionId &&
+             (resource == null || resource.data.institutionId == institutionId);
+    }
+
+    // =========================================================================
+    // MULTI-TENANT ISOLATED INSTITUTION COLLECTIONS
+    // =========================================================================
+
+    match /institutions/{institutionId} {
+      allow read: if isTenantMember(institutionId);
+      allow create, update, delete: if hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL']);
+
+      // 1. Users & RBAC Identity
+      match /users/{userId} {
+        allow read: if isTenantMember(institutionId);
+        allow create: if isTenantMember(institutionId) && hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL']);
+        allow update: if isTenantMember(institutionId) && (
+          hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL']) ||
+          (isSelf(userId) && 
+           !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'permissions', 'institutionId', 'isAccountDisabled']))
+        );
+        allow delete: if isTenantMember(institutionId) && hasAnyRole(['ADMIN', 'ROLE_ADMIN']);
+      }
+
+      // 2. Students & Scholar Records
+      match /students/{studentId} {
+        allow read: if isTenantMember(institutionId) && (
+          hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'TEACHER', 'ROLE_TEACHER', 'INCHARGE', 'ROLE_INCHARGE', 'ACCOUNTANT', 'ROLE_ACCOUNTANT']) ||
+          isSelf(studentId) ||
+          request.auth.token.wardStudentIds.hasAny([studentId])
+        );
+        allow write: if isTenantMember(institutionId) && preservesTenant(institutionId) &&
+          hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'OFFICE', 'ROLE_OFFICE']);
+      }
+
+      // 3. Faculty & Staff
+      match /staff/{staffId} {
+        allow read: if isTenantMember(institutionId);
+        allow write: if isTenantMember(institutionId) && preservesTenant(institutionId) &&
+          hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'STAFF_MANAGER', 'ROLE_STAFF_MANAGER']);
+      }
+
+      // 4. Attendance & Register Records
+      match /attendance/{recordId} {
+        allow read: if isTenantMember(institutionId) && (
+          hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'TEACHER', 'ROLE_TEACHER', 'INCHARGE', 'ROLE_INCHARGE']) ||
+          resource.data.studentId == getAuthUid() ||
+          request.auth.token.wardStudentIds.hasAny([resource.data.studentId])
+        );
+        allow create, update: if isTenantMember(institutionId) && preservesTenant(institutionId) &&
+          hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'TEACHER', 'ROLE_TEACHER', 'INCHARGE', 'ROLE_INCHARGE']);
+        allow delete: if isTenantMember(institutionId) && hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL']);
+      }
+
+      // 5. Examinations & Report Cards
+      match /exam_records/{examId} {
+        allow read: if isTenantMember(institutionId) && (
+          hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'TEACHER', 'ROLE_TEACHER', 'INCHARGE', 'ROLE_INCHARGE']) ||
+          (resource.data.isPublished == true && (
+            resource.data.studentId == getAuthUid() ||
+            request.auth.token.wardStudentIds.hasAny([resource.data.studentId])
+          ))
+        );
+        allow create, update: if isTenantMember(institutionId) && preservesTenant(institutionId) &&
+          hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'TEACHER', 'ROLE_TEACHER', 'INCHARGE', 'ROLE_INCHARGE']);
+        allow delete: if isTenantMember(institutionId) && hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL']);
+      }
+
+      // 6. Fee Invoices & Financial Ledgers
+      match /fee_invoices/{invoiceId} {
+        allow read: if isTenantMember(institutionId) && (
+          hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'ACCOUNTANT', 'ROLE_ACCOUNTANT']) ||
+          resource.data.studentId == getAuthUid() ||
+          request.auth.token.wardStudentIds.hasAny([resource.data.studentId])
+        );
+        allow write: if isTenantMember(institutionId) && preservesTenant(institutionId) &&
+          hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'ACCOUNTANT', 'ROLE_ACCOUNTANT']);
+      }
+
+      // 7. Payment Transactions (Immutable, Server-Validated Ledger)
+      match /payment_transactions/{transactionId} {
+        allow read: if isTenantMember(institutionId) && (
+          hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'ACCOUNTANT', 'ROLE_ACCOUNTANT']) ||
+          resource.data.studentId == getAuthUid()
+        );
+        // Only created via verified server-side Cloud Functions or Accountant
+        allow create: if isTenantMember(institutionId) && preservesTenant(institutionId) &&
+          (hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'ACCOUNTANT', 'ROLE_ACCOUNTANT']) || request.auth.token.isServerService == true);
+        allow update, delete: if false; // Strict immutability
+      }
+
+      // 8. Homework & Submissions
+      match /homework/{homeworkId} {
+        allow read: if isTenantMember(institutionId);
+        allow write: if isTenantMember(institutionId) && preservesTenant(institutionId) &&
+          hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'TEACHER', 'ROLE_TEACHER', 'INCHARGE', 'ROLE_INCHARGE']);
+
+        match /submissions/{submissionId} {
+          allow read: if isTenantMember(institutionId) && (
+            hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'TEACHER', 'ROLE_TEACHER']) ||
+            resource.data.studentId == getAuthUid()
+          );
+          allow create: if isTenantMember(institutionId) && (
+            hasRole('STUDENT') || hasRole('ROLE_STUDENT')
+          );
+          allow update: if isTenantMember(institutionId) && (
+            hasAnyRole(['TEACHER', 'ROLE_TEACHER', 'ADMIN', 'ROLE_ADMIN']) ||
+            (isSelf(resource.data.studentId) && resource.data.status != 'EVALUATED')
+          );
+        }
+      }
+
+      // 9. Library Catalog & Book Issues
+      match /library_books/{bookId} {
+        allow read: if isTenantMember(institutionId);
+        allow write: if isTenantMember(institutionId) && preservesTenant(institutionId) &&
+          hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'LIBRARIAN', 'ROLE_LIBRARIAN', 'PRINCIPAL', 'ROLE_PRINCIPAL']);
+      }
+
+      match /library_issues/{issueId} {
+        allow read: if isTenantMember(institutionId) && (
+          hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'LIBRARIAN', 'ROLE_LIBRARIAN', 'PRINCIPAL', 'ROLE_PRINCIPAL']) ||
+          resource.data.borrowerId == getAuthUid()
+        );
+        allow write: if isTenantMember(institutionId) && preservesTenant(institutionId) &&
+          hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'LIBRARIAN', 'ROLE_LIBRARIAN']);
+      }
+
+      // 10. Transport Logistics
+      match /transport_routes/{routeId} {
+        allow read: if isTenantMember(institutionId);
+        allow write: if isTenantMember(institutionId) && preservesTenant(institutionId) &&
+          hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'TRANSPORT_STAFF', 'ROLE_TRANSPORT_STAFF', 'PRINCIPAL', 'ROLE_PRINCIPAL']);
+      }
+
+      // 11. Immutable Audit Logs (Append-Only)
+      match /audit_logs/{logId} {
+        allow read: if isTenantMember(institutionId) &&
+          hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'ACCOUNTANT', 'ROLE_ACCOUNTANT']);
+        allow create: if isTenantMember(institutionId) && preservesTenant(institutionId) &&
+          request.resource.data.actorUserId == getAuthUid();
+        allow update, delete: if false; // Anti-tamper requirement
+      }
+    }
+
+    // Default deny all other paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

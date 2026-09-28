@@ -1,0 +1,72 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isAuthenticated() {
+      return request.auth != null && request.auth.uid != null;
+    }
+
+    function isTenantMember(institutionId) {
+      return isAuthenticated() && (
+        request.auth.token.tenantId == institutionId ||
+        request.auth.token.isSuperAdmin == true
+      );
+    }
+
+    function isValidImage() {
+      return request.resource.contentType.matches('image/(jpeg|png|webp)') &&
+             request.resource.size < 5 * 1024 * 1024; // 5 MB max
+    }
+
+    function isValidDocument() {
+      return request.resource.contentType.matches('(application/pdf|image/(jpeg|png))') &&
+             request.resource.size < 15 * 1024 * 1024; // 15 MB max
+    }
+
+    // Tenant-isolated storage bucket structure
+    match /institutions/{institutionId} {
+
+      // Student and Staff Profile Photos
+      match /photos/{userId}/{fileName} {
+        allow read: if isTenantMember(institutionId);
+        allow write: if isTenantMember(institutionId) && isValidImage() && (
+          request.auth.uid == userId ||
+          request.auth.token.role in ['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'STAFF_MANAGER']
+        );
+      }
+
+      // Official Certificates and Fee Invoices (PDFs)
+      match /certificates/{studentId}/{fileName} {
+        allow read: if isTenantMember(institutionId) && (
+          request.auth.uid == studentId ||
+          request.auth.token.wardStudentIds.hasAny([studentId]) ||
+          request.auth.token.role in ['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'OFFICE']
+        );
+        allow write: if isTenantMember(institutionId) && isValidDocument() &&
+          request.auth.token.role in ['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'OFFICE'];
+      }
+
+      // Homework and Assignment Attachments
+      match /homework/{homeworkId}/{fileName} {
+        allow read: if isTenantMember(institutionId);
+        allow write: if isTenantMember(institutionId) && isValidDocument() &&
+          request.auth.token.role in ['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'TEACHER', 'ROLE_TEACHER'];
+      }
+
+      // Homework Student Submissions
+      match /submissions/{homeworkId}/{studentId}/{fileName} {
+        allow read: if isTenantMember(institutionId) && (
+          request.auth.uid == studentId ||
+          request.auth.token.role in ['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'TEACHER', 'ROLE_TEACHER']
+        );
+        allow write: if isTenantMember(institutionId) && isValidDocument() &&
+          request.auth.uid == studentId;
+      }
+    }
+
+    // Deny all other paths
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

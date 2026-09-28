@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.withContext
+import javax.inject.Inject
+import javax.inject.Singleton
 
 interface AttendanceRepository {
     val allAttendance: Flow<List<AttendanceEntity>>
@@ -53,10 +55,11 @@ interface AttendanceRepository {
     )
 }
 
-class AttendanceRepositoryImpl(
-    private val dao: SchoolDao,
-    private val externalScope: CoroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+@Singleton
+class AttendanceRepositoryImpl @Inject constructor(
+    private val dao: SchoolDao
 ) : AttendanceRepository {
+    private val externalScope: CoroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     override val allAttendance: Flow<List<AttendanceEntity>> = dao.getAllAttendance()
     override val attendanceState: StateFlow<List<AttendanceEntity>> = allAttendance

@@ -1,41 +1,58 @@
 package com.example.ui.viewmodel
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.entities.AcademicClassEntity
 import com.example.data.local.entities.AdmissionApplicationEntity
+import com.example.data.local.entities.AiAuditLogEntity
 import com.example.data.local.entities.AttendanceEntity
 import com.example.data.local.entities.AttendanceRecordEntity
 import com.example.data.local.entities.AuditLogEntity
 import com.example.data.local.entities.CertificateEntity
 import com.example.data.local.entities.CircularEntity
 import com.example.data.local.entities.ExamRecordEntity
+import com.example.data.local.entities.FeePaymentTransactionEntity
 import com.example.data.local.entities.FeeRecordEntity
+import com.example.data.local.entities.FeeStructureEntity
 import com.example.data.local.entities.GovernmentComplianceEntity
+import com.example.data.local.entities.HomeworkEntity
+import com.example.data.local.entities.HomeworkSubmissionEntity
 import com.example.data.local.entities.IdCardRecordEntity
 import com.example.data.local.entities.InchargeEditRequestEntity
 import com.example.data.local.entities.InstitutionEntity
 import com.example.data.local.entities.InstitutionalBillEntity
 import com.example.data.local.entities.NoticeMeetingEntity
+import com.example.data.local.entities.ParentWardLinkEntity
+import com.example.data.local.entities.PushNotificationEntity
 import com.example.data.local.entities.RegisterScanBatchEntity
 import com.example.data.local.entities.SchoolDiaryEntity
 import com.example.data.local.entities.SchoolInstructionEntity
 import com.example.data.local.entities.StaffEntity
 import com.example.data.local.entities.StudentEntity
+import com.example.data.local.entities.StudentLeaveRequestEntity
+import com.example.data.local.entities.SubjectEntity
 import com.example.data.local.entities.SyncQueueEntity
 import com.example.data.local.entities.TeacherEntity
 import com.example.data.local.entities.TimetableSlotEntity
 import com.example.data.local.entities.UserEntity
+import com.example.security.SecurityUtils
+import com.example.security.TenantSecurityContext
 import com.example.data.model.SchoolPermissions
 import com.example.data.model.SecurityClaims
 import com.example.data.model.UserRole
 import com.example.data.model.getDefaultPermissionsForRole
 import com.example.data.repository.AiAcademicAssistant
 import com.example.data.repository.AttendanceRepository
+import com.example.data.repository.AuthRepository
+import com.example.data.repository.AuthRepositoryImpl
 import com.example.data.repository.SchoolRepository
 import com.example.data.repository.UserRepository
+import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
+import javax.inject.Inject
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -44,14 +61,29 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-class SchoolViewModel(
+@HiltViewModel
+class SchoolViewModel @Inject constructor(
     val repository: SchoolRepository,
-    val userRepository: UserRepository = repository.userRepository,
-    val attendanceRepository: AttendanceRepository = repository.attendanceRepository,
-    private val context: Context? = null
+    val userRepository: UserRepository,
+    val attendanceRepository: AttendanceRepository,
+    val authRepository: AuthRepository,
+    @ApplicationContext private val context: Context? = null
 ) : ViewModel() {
 
-    private val prefs by lazy {
+    constructor(
+        repository: SchoolRepository,
+        userRepository: UserRepository = repository.userRepository,
+        attendanceRepository: AttendanceRepository = repository.attendanceRepository,
+        context: Context? = null
+    ) : this(
+        repository = repository,
+        userRepository = userRepository,
+        attendanceRepository = attendanceRepository,
+        authRepository = AuthRepositoryImpl(repository.dao),
+        context = context
+    )
+
+    private val prefs: SharedPreferences? by lazy {
         context?.getSharedPreferences("sxa_school_prefs", Context.MODE_PRIVATE)
     }
 
@@ -195,11 +227,52 @@ class SchoolViewModel(
     val pendingSyncCount: StateFlow<Int> = repository.pendingSyncCount
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
+    val homeworkList: StateFlow<List<HomeworkEntity>> = repository.getHomeworkForInstitution()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val homeworkSubmissions: StateFlow<List<HomeworkSubmissionEntity>> = repository.getSubmissionsForStudent("ADM-2026-001")
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val leaveRequests: StateFlow<List<StudentLeaveRequestEntity>> = repository.getLeaveRequestsForInstitution()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val feeStructures: StateFlow<List<FeeStructureEntity>> = repository.getFeeStructures()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val paymentTransactions: StateFlow<List<FeePaymentTransactionEntity>> = repository.getPaymentTransactions()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val notifications: StateFlow<List<PushNotificationEntity>> = repository.getNotificationsForUser("INST-SXA-2026", "ALL")
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val unreadNotificationCount: StateFlow<Int> = repository.getUnreadNotificationCount("INST-SXA-2026", "ALL")
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    val subjects: StateFlow<List<SubjectEntity>> = repository.getSubjectsForInstitution()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val parentWardLinks: StateFlow<List<ParentWardLinkEntity>> = repository.getWardsForParent("USR-PAR-01")
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    private val _selectedWardId = MutableStateFlow("ADM-2026-001")
+    val selectedWardId: StateFlow<String> = _selectedWardId.asStateFlow()
+
     val isTeacherOneTimeSetupDone: StateFlow<Boolean> = isTeacherAuthenticated
     val isInchargeOneTimeSetupDone: StateFlow<Boolean> = isInchargeAuthenticated
     val isStudentOneTimeSetupDone: StateFlow<Boolean> = isStudentAuthenticated
 
+    // Enterprise Immutable Audit Logging & Encrypted Compliance Service
+    val immutableAuditService = com.example.security.audit.ImmutableAuditLoggingService(repository.dao)
+    val auditChainReport: StateFlow<com.example.security.audit.AuditChainVerificationReport?> = immutableAuditService.lastVerificationReport
+    val isAuditSyncing: StateFlow<Boolean> = immutableAuditService.isSyncing
+    val lastAuditSyncResult: StateFlow<com.example.security.audit.EncryptedAuditSyncResult?> = immutableAuditService.lastSyncResult
+    val pendingAuditSyncCount: StateFlow<Int> = immutableAuditService.pendingSyncCount
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
     init {
+        // Start background periodic encrypted synchronization to compliance cloud
+        immutableAuditService.startPeriodicSync(viewModelScope, intervalMillis = 60_000L)
+
         viewModelScope.launch {
             // Load verified default institution
             val defaultInst = repository.getInstitution()
@@ -349,15 +422,16 @@ class SchoolViewModel(
                         sessionToken = session.token
                     )
                     _userClaims.value = claims
+                    TenantSecurityContext.setContext(claims, inst.institutionId)
 
                     when (session.role) {
-                        UserRole.PRINCIPAL -> _isPrincipalAuthenticated.value = true
+                        UserRole.ADMIN, UserRole.PRINCIPAL -> _isPrincipalAuthenticated.value = true
                         UserRole.INCHARGE -> {
                             _isInchargeAuthenticated.value = true
                             val staff = repository.getStaffByPhone(session.user.phoneNumber)
                             if (staff != null) _authenticatedIncharge.value = staff
                         }
-                        UserRole.TEACHING -> {
+                        UserRole.TEACHER, UserRole.TEACHING -> {
                             _isTeacherAuthenticated.value = true
                             val staff = repository.getStaffByPhone(session.user.phoneNumber)
                             if (staff != null) _authenticatedTeacher.value = staff
@@ -470,7 +544,10 @@ class SchoolViewModel(
         val actorId = claims?.userId ?: "SYSTEM_AUTH"
         val actorName = claims?.displayName ?: _userProfileName.value
         val actorRole = claims?.roleClaim ?: _currentRole.value.roleClaim
-        val auditLog = AuditLogEntity(
+        val instId = _verifiedInstitution.value?.institutionId ?: "INST-SXA-2026"
+
+        immutableAuditService.recordDatabaseTransaction(
+            institutionId = instId,
             action = action,
             entityType = entityType,
             entityId = entityId,
@@ -481,7 +558,45 @@ class SchoolViewModel(
             newState = newState,
             remarks = remarks
         )
-        repository.insertAuditLog(auditLog)
+    }
+
+    fun recordSensitiveUiInteraction(
+        action: String,
+        screenName: String,
+        details: String
+    ) {
+        viewModelScope.launch {
+            val claims = _userClaims.value
+            val actorId = claims?.userId ?: "SYSTEM_AUTH"
+            val actorName = claims?.displayName ?: _userProfileName.value
+            val actorRole = claims?.roleClaim ?: _currentRole.value.roleClaim
+            val instId = _verifiedInstitution.value?.institutionId ?: "INST-SXA-2026"
+
+            immutableAuditService.recordSensitiveUiInteraction(
+                institutionId = instId,
+                action = action,
+                screenName = screenName,
+                actorUserId = actorId,
+                actorName = actorName,
+                actorRole = actorRole,
+                details = details
+            )
+        }
+    }
+
+    fun verifyAuditChainIntegrity() {
+        viewModelScope.launch {
+            val instId = _verifiedInstitution.value?.institutionId ?: "INST-SXA-2026"
+            immutableAuditService.verifyChainIntegrity(instId)
+        }
+    }
+
+    fun triggerEncryptedAuditSync(onComplete: ((com.example.security.audit.EncryptedAuditSyncResult) -> Unit)? = null) {
+        viewModelScope.launch {
+            val instId = _verifiedInstitution.value?.institutionId ?: "INST-SXA-2026"
+            val res = immutableAuditService.syncPendingAuditLogsEncrypted(instId)
+            onComplete?.invoke(res)
+        }
     }
 
     // =========================================================================
@@ -614,9 +729,10 @@ class SchoolViewModel(
         updateProfileNameForRole(role)
         val dummyClaims = SecurityClaims(
             userId = when (role) {
+                UserRole.ADMIN -> "USR-ADM-01"
                 UserRole.PRINCIPAL -> "FAC-PRIN-01"
                 UserRole.INCHARGE -> "FAC-TCH-02"
-                UserRole.TEACHING -> "FAC-TCH-01"
+                UserRole.TEACHER, UserRole.TEACHING -> "FAC-TCH-01"
                 UserRole.STUDENT -> "ADM-2026-001"
                 UserRole.PARENT -> "PAR-ADM-2026-001"
                 UserRole.ACCOUNTANT -> "FAC-ACC-01"
@@ -625,10 +741,11 @@ class SchoolViewModel(
             role = role,
             roleClaim = role.roleClaim,
             displayName = when (role) {
+                UserRole.ADMIN -> "Dr. Elena Vance (Administrator)"
                 UserRole.PRINCIPAL -> "Prof. Robert Vance (Principal)"
                 UserRole.INCHARGE -> "Mrs. Sunita Kapoor (Class Incharge 10-A)"
-                UserRole.TEACHING -> "Dr. Meenakshi Sundaram (Faculty)"
-                UserRole.STUDENT -> "Aarav Sharma (Scholar)"
+                UserRole.TEACHER, UserRole.TEACHING -> "Mrs. Sunita Kapoor (Senior Faculty & Teacher)"
+                UserRole.STUDENT -> "Aarav Sharma (Scholar Roll #1)"
                 UserRole.PARENT -> "Vikram Sharma (Guardian)"
                 UserRole.ACCOUNTANT -> "Suresh Mehta (Accounts Head)"
                 else -> "Operations Staff"
@@ -650,15 +767,18 @@ class SchoolViewModel(
 
     private fun updateProfileNameForRole(role: UserRole) {
         _userProfileName.value = when (role) {
+            UserRole.ADMIN -> "Dr. Elena Vance (System Administrator)"
             UserRole.PRINCIPAL -> "Prof. Robert Vance, Ph.D. (Principal)"
             UserRole.VICE_PRINCIPAL -> "Vice Principal Desk"
             UserRole.INCHARGE -> _authenticatedIncharge.value?.name?.let { "$it (Incharge 10-A)" } ?: "Mrs. Sunita Kapoor (Incharge 10-A)"
-            UserRole.TEACHING -> _authenticatedTeacher.value?.name?.let { "$it (Faculty)" } ?: "Dr. Meenakshi Sundaram (Faculty)"
+            UserRole.TEACHER, UserRole.TEACHING -> _authenticatedTeacher.value?.name?.let { "$it (Faculty & Teacher)" } ?: "Mrs. Sunita Kapoor (Faculty & Teacher)"
             UserRole.STUDENT -> _authenticatedStudent.value?.let { "${it.name} (${it.admissionNumber})" } ?: "Aarav Sharma (ADM-2026-001)"
             UserRole.PARENT -> "Vikram Sharma (Guardian of Aarav)"
             UserRole.ACCOUNTANT -> "Suresh Mehta (Accounts Manager)"
             UserRole.OFFICE -> "Registrar & Admissions Desk"
             UserRole.STAFF_MANAGER -> "Staff Directorate"
+            UserRole.LIBRARIAN -> "Anita Roy (Chief Librarian)"
+            UserRole.TRANSPORT_STAFF -> "Harish Chandra (Transport Head)"
             UserRole.NON_TEACHING -> "Rajesh Verma (Operations Head)"
         }
     }
@@ -1315,6 +1435,307 @@ class SchoolViewModel(
             students = students,
             feeRecords = feeRecords
         )
+    }
+
+    // =========================================================================
+    // MULTI-TENANT INSTITUTION ONBOARDING
+    // =========================================================================
+    fun onboardNewInstitution(
+        name: String,
+        regCode: String,
+        affiliation: String,
+        address: String,
+        phone: String,
+        email: String,
+        motto: String,
+        principalName: String,
+        onResult: (Boolean, String) -> Unit
+    ) {
+        viewModelScope.launch {
+            if (name.isBlank() || regCode.isBlank()) {
+                onResult(false, "Institution name and registration code are required.")
+                return@launch
+            }
+            val instId = "INST-${regCode.trim().uppercase()}-${System.currentTimeMillis() % 1000}"
+            val newInst = InstitutionEntity(
+                institutionId = instId,
+                registrationCode = regCode.trim(),
+                name = name.trim(),
+                motto = motto.ifBlank { "Knowledge, Truth & Excellence" },
+                affiliationCode = affiliation.trim(),
+                address = address.trim(),
+                cityCampus = address.take(25),
+                contactPhone = phone.trim(),
+                email = email.trim(),
+                website = "https://${regCode.lowercase()}.edu",
+                currentAcademicYear = "2026-2027",
+                availableBatches = "2026-27,2025-26",
+                principalName = principalName.ifBlank { "Executive Principal" }
+            )
+            repository.insertInstitution(newInst)
+            logAuditEvent(
+                action = "INSTITUTION_ONBOARDED_SAAS",
+                entityType = "Institution",
+                entityId = instId,
+                previousState = null,
+                newState = "ACTIVE",
+                remarks = "New school tenant '$name' successfully onboarded into SaaS platform."
+            )
+            onResult(true, "Institution successfully registered.")
+        }
+    }
+
+    // =========================================================================
+    // HOMEWORK & ASSIGNMENT MANAGEMENT
+    // =========================================================================
+    fun createHomework(
+        title: String,
+        description: String,
+        classSection: String,
+        subject: String,
+        dueDate: String,
+        maxMarks: Int,
+        onResult: (Boolean, String) -> Unit
+    ) {
+        viewModelScope.launch {
+            if (title.isBlank() || classSection.isBlank()) {
+                onResult(false, "Title and class section are required.")
+                return@launch
+            }
+            val instId = _verifiedInstitution.value?.institutionId ?: "INST-SXA-2026"
+            val hw = HomeworkEntity(
+                homeworkId = "HW-${classSection.replace("-", "")}-${System.currentTimeMillis() % 10000}",
+                institutionId = instId,
+                classSection = classSection,
+                subject = subject,
+                title = title,
+                description = description,
+                dueDate = dueDate,
+                maxMarks = maxMarks,
+                teacherId = _userClaims.value?.userId ?: "FAC-TCH-02",
+                teacherName = _userProfileName.value
+            )
+            repository.insertHomework(hw)
+            logAuditEvent(
+                action = "HOMEWORK_ASSIGNED",
+                entityType = "Homework",
+                entityId = hw.homeworkId,
+                previousState = null,
+                newState = "PUBLISHED",
+                remarks = "Homework '$title' assigned to class $classSection by ${_userProfileName.value}"
+            )
+            onResult(true, "Homework published successfully.")
+        }
+    }
+
+    fun submitHomework(
+        homeworkId: String,
+        submissionText: String,
+        onResult: (Boolean, String) -> Unit
+    ) {
+        viewModelScope.launch {
+            if (submissionText.isBlank()) {
+                onResult(false, "Submission text cannot be empty.")
+                return@launch
+            }
+            val instId = _verifiedInstitution.value?.institutionId ?: "INST-SXA-2026"
+            val studentId = _authenticatedStudent.value?.id ?: "ADM-2026-001"
+            val studentName = _authenticatedStudent.value?.name ?: "Aarav Sharma"
+            val sub = HomeworkSubmissionEntity(
+                submissionId = "SUB-$homeworkId-$studentId",
+                homeworkId = homeworkId,
+                institutionId = instId,
+                studentId = studentId,
+                studentName = studentName,
+                submissionText = submissionText,
+                status = "SUBMITTED"
+            )
+            repository.insertHomeworkSubmission(sub)
+            logAuditEvent(
+                action = "HOMEWORK_SUBMITTED",
+                entityType = "HomeworkSubmission",
+                entityId = sub.submissionId,
+                previousState = null,
+                newState = "SUBMITTED",
+                remarks = "Scholar $studentName submitted assignment $homeworkId"
+            )
+            onResult(true, "Assignment submitted successfully.")
+        }
+    }
+
+    fun gradeHomework(
+        submissionId: String,
+        marks: Int,
+        feedback: String,
+        onResult: (Boolean, String) -> Unit
+    ) {
+        viewModelScope.launch {
+            val instId = _verifiedInstitution.value?.institutionId ?: "INST-SXA-2026"
+            val auditLog = AuditLogEntity(
+                institutionId = instId,
+                action = "HOMEWORK_GRADED",
+                entityType = "HomeworkSubmission",
+                entityId = submissionId,
+                actorUserId = _userClaims.value?.userId ?: "TEACHER",
+                actorName = _userProfileName.value,
+                actorRole = "ROLE_TEACHER",
+                previousState = "SUBMITTED",
+                newState = "EVALUATED",
+                remarks = "Graded with score $marks and remarks '$feedback'"
+            )
+            repository.gradeHomeworkSubmission(submissionId, "EVALUATED", marks, feedback, auditLog)
+            onResult(true, "Submission successfully graded.")
+        }
+    }
+
+    // =========================================================================
+    // STUDENT LEAVE REQUESTS
+    // =========================================================================
+    fun applyStudentLeave(
+        startDate: String,
+        endDate: String,
+        reason: String,
+        onResult: (Boolean, String) -> Unit
+    ) {
+        viewModelScope.launch {
+            if (reason.isBlank()) {
+                onResult(false, "Please provide reason for leave.")
+                return@launch
+            }
+            val instId = _verifiedInstitution.value?.institutionId ?: "INST-SXA-2026"
+            val studentId = _authenticatedStudent.value?.id ?: "ADM-2026-001"
+            val studentName = _authenticatedStudent.value?.name ?: "Aarav Sharma"
+            val req = StudentLeaveRequestEntity(
+                leaveId = "LEV-${System.currentTimeMillis() % 100000}",
+                institutionId = instId,
+                studentId = studentId,
+                studentName = studentName,
+                classSection = _authenticatedStudent.value?.let { "${it.grade}-${it.section}" } ?: "10-A",
+                startDate = startDate,
+                endDate = endDate,
+                reason = reason,
+                status = "PENDING",
+                appliedBy = if (_currentRole.value == UserRole.PARENT) "PARENT" else "STUDENT"
+            )
+            repository.submitLeaveRequest(req)
+            logAuditEvent(
+                action = "STUDENT_LEAVE_APPLIED",
+                entityType = "LeaveRequest",
+                entityId = req.leaveId,
+                previousState = null,
+                newState = "PENDING",
+                remarks = "Leave request submitted for $studentName ($startDate to $endDate) - $reason"
+            )
+            onResult(true, "Leave request submitted to Class In-Charge.")
+        }
+    }
+
+    fun reviewLeaveRequest(
+        leaveId: String,
+        isApproved: Boolean,
+        remarks: String,
+        onResult: (Boolean, String) -> Unit
+    ) {
+        viewModelScope.launch {
+            val instId = _verifiedInstitution.value?.institutionId ?: "INST-SXA-2026"
+            val status = if (isApproved) "APPROVED" else "REJECTED"
+            val auditLog = AuditLogEntity(
+                institutionId = instId,
+                action = "LEAVE_REQUEST_REVIEWED",
+                entityType = "LeaveRequest",
+                entityId = leaveId,
+                actorUserId = _userClaims.value?.userId ?: "INCHARGE",
+                actorName = _userProfileName.value,
+                actorRole = _currentRole.value.roleClaim,
+                previousState = "PENDING",
+                newState = status,
+                remarks = "Leave $status by ${_userProfileName.value}: $remarks"
+            )
+            repository.reviewLeaveRequest(leaveId, status, _userProfileName.value, remarks, auditLog)
+            onResult(true, "Leave request $status.")
+        }
+    }
+
+    // =========================================================================
+    // FEE MANAGEMENT & PAYMENT TRANSACTIONS
+    // =========================================================================
+    fun processFeePayment(
+        feeRecord: FeeRecordEntity,
+        amountRupees: Long,
+        paymentMode: String,
+        onResult: (Boolean, String) -> Unit
+    ) {
+        viewModelScope.launch {
+            val instId = _verifiedInstitution.value?.institutionId ?: "INST-SXA-2026"
+            val amountPaise = amountRupees * 100L
+            val newPaidPaise = feeRecord.paidAmount + amountPaise
+            val newDuePaise = (feeRecord.totalAmount - newPaidPaise).coerceAtLeast(0L)
+            val newStatus = if (newDuePaise <= 0L) "PAID" else "PARTIAL"
+            val receiptNo = "SXA-REC-${System.currentTimeMillis() % 100000}"
+
+            val txn = FeePaymentTransactionEntity(
+                transactionId = "TXN-${System.currentTimeMillis() % 100000}",
+                institutionId = instId,
+                feeRecordId = feeRecord.id,
+                studentId = feeRecord.studentId,
+                studentName = feeRecord.studentName,
+                amountPaidPaise = amountPaise,
+                paymentMode = paymentMode,
+                transactionReference = "REF-${System.currentTimeMillis() % 1000000}",
+                receiptNumber = receiptNo,
+                cashierName = _userProfileName.value,
+                status = "SUCCESS"
+            )
+
+            val auditLog = AuditLogEntity(
+                institutionId = instId,
+                action = "FEE_PAYMENT_PROCESSED",
+                entityType = "FeeRecord",
+                entityId = feeRecord.id,
+                actorUserId = _userClaims.value?.userId ?: "BURSAR",
+                actorName = _userProfileName.value,
+                actorRole = _currentRole.value.roleClaim,
+                previousState = feeRecord.status,
+                newState = newStatus,
+                remarks = "Recorded payment of ₹$amountRupees for ${feeRecord.studentName}. Receipt: $receiptNo"
+            )
+
+            repository.recordFeePaymentAtomic(
+                feeId = feeRecord.id,
+                transaction = txn,
+                paidPaise = newPaidPaise,
+                duePaise = newDuePaise,
+                status = newStatus,
+                auditLog = auditLog
+            )
+            onResult(true, "Payment recorded successfully. Receipt #$receiptNo generated.")
+        }
+    }
+
+    // =========================================================================
+    // PUSH NOTIFICATIONS & ALERTS
+    // =========================================================================
+    fun markNotificationAsRead(notificationId: String) {
+        viewModelScope.launch {
+            repository.markNotificationAsRead(notificationId)
+        }
+    }
+
+    fun markAllNotificationsRead() {
+        viewModelScope.launch {
+            val instId = _verifiedInstitution.value?.institutionId ?: "INST-SXA-2026"
+            repository.markAllNotificationsAsRead(instId)
+        }
+    }
+
+    fun selectWard(studentId: String) {
+        viewModelScope.launch {
+            _selectedWardId.value = studentId
+            val student = repository.getStudentById(studentId)
+            if (student != null) {
+                _authenticatedStudent.value = student
+            }
+        }
     }
 
     fun publishGeneratedCircular(title: String, content: String, targetAudience: String) {

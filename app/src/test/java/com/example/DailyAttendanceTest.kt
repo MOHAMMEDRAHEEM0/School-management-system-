@@ -144,4 +144,59 @@ class DailyAttendanceTest {
         val records = attendanceRepository.observeAttendanceForPerson(s1.id).first()
         assertTrue(records.any { it.status == "PRESENT" && it.sourceMethod == "DAILY_ATTENDANCE_UI" })
     }
+
+    @Test
+    fun testWhatsAppAttendanceMessageGenerationAllPresent() {
+        val message = com.example.ui.components.AttendanceWhatsAppGenerator.generateComputerGeneratedWhatsAppMessage(
+            studentName = "Aarav Sharma",
+            date = "2026-09-22",
+            totalClasses = 5,
+            absentClasses = emptyList(),
+            linkedMobile = "+91 98765 43210"
+        )
+
+        assertTrue(message.contains("Aarav Sharma was present in all classes"))
+        assertTrue(message.contains("2026-09-22"))
+        assertTrue(message.contains("+91 98765 43210"))
+    }
+
+    @Test
+    fun testWhatsAppAttendanceMessageGenerationPartialAbsent() {
+        // Standard wording
+        val messageStandard = com.example.ui.components.AttendanceWhatsAppGenerator.generateComputerGeneratedWhatsAppMessage(
+            studentName = "Diya Patel",
+            date = "2026-09-22",
+            totalClasses = 5,
+            absentClasses = listOf("Physics Lab"),
+            linkedMobile = "+91 98765 43211",
+            useLiteralPromptPhrase = false
+        )
+        assertTrue(messageStandard.contains("Diya Patel was not present in this class: Physics Lab"))
+
+        // Literal prompt phrasing: "was now present in this class"
+        val messageLiteral = com.example.ui.components.AttendanceWhatsAppGenerator.generateComputerGeneratedWhatsAppMessage(
+            studentName = "Diya Patel",
+            date = "2026-09-22",
+            totalClasses = 5,
+            absentClasses = listOf("Physics Lab"),
+            linkedMobile = "+91 98765 43211",
+            useLiteralPromptPhrase = true
+        )
+        assertTrue(messageLiteral.contains("Diya Patel was now present in this class: Physics Lab"))
+    }
+
+    @Test
+    fun testWhatsAppAttendanceMessageGenerationAllAbsent() {
+        val message = com.example.ui.components.AttendanceWhatsAppGenerator.generateComputerGeneratedWhatsAppMessage(
+            studentName = "Rohan Verma",
+            date = "2026-09-22",
+            totalClasses = 5,
+            absentClasses = listOf("Assembly", "P1", "P2", "P3", "P4"),
+            linkedMobile = "+91 98765 43212"
+        )
+
+        assertTrue(message.contains("Rohan Verma was absent today"))
+        assertTrue(message.contains("2026-09-22"))
+        assertTrue(message.contains("+91 98765 43212"))
+    }
 }

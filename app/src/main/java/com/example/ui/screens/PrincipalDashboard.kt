@@ -299,6 +299,12 @@ fun PrincipalDashboard(
                     onClick = { selectedTab = 3 },
                     text = { Text("AI Academic Tools", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
                 )
+                Tab(
+                    selected = selectedTab == 4,
+                    onClick = { selectedTab = 4 },
+                    text = { Text("Payment Sandbox", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) },
+                    modifier = Modifier.testTag("tab_principal_payment_sandbox")
+                )
             }
         }
 
@@ -703,6 +709,16 @@ fun PrincipalDashboard(
             AiAcademicToolsSection(
                 viewModel = viewModel,
                 userRole = "PRINCIPAL",
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        // =====================================================================
+        // TAB 4: PAYMENT SANDBOX DASHBOARD (ADMIN WEBHOOK & LEDGER VERIFIER)
+        // =====================================================================
+        if (selectedTab == 4) {
+            com.example.ui.components.PaymentSandboxDashboard(
+                viewModel = viewModel,
                 modifier = Modifier.fillMaxWidth()
             )
         }

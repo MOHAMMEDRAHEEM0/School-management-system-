@@ -8,6 +8,8 @@ import com.example.data.local.entities.AuditLogEntity
 import com.example.data.local.entities.StudentEntity
 import com.example.data.repository.AttendanceRepository
 import com.example.data.repository.SchoolRepository
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -34,7 +36,8 @@ data class StudentAttendanceItem(
     val status: String = "PRESENT",
     val remarks: String = "",
     val historicalPercentage: Float = 95.0f,
-    val guardianPhone: String = ""
+    val guardianPhone: String = "",
+    val studentPhone: String = guardianPhone
 )
 
 data class AttendanceSummary(
@@ -70,10 +73,15 @@ data class TeacherAttendanceUiState(
     val isAlreadyRecorded: Boolean = false,
     val lastSavedTimestamp: Long? = null,
     val feedbackMessage: String? = null,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val showWhatsAppPushSheet: Boolean = false,
+    val selectedStudentForWhatsApp: StudentAttendanceItem? = null,
+    val showPostSaveWhatsAppPrompt: Boolean = false,
+    val lastWhatsAppPushCount: Int? = null
 )
 
-class TeacherAttendanceViewModel(
+@HiltViewModel
+class TeacherAttendanceViewModel @Inject constructor(
     private val attendanceRepository: AttendanceRepository,
     private val schoolRepository: SchoolRepository
 ) : ViewModel() {
@@ -280,7 +288,8 @@ class TeacherAttendanceViewModel(
                         isSaving = false,
                         isAlreadyRecorded = true,
                         lastSavedTimestamp = timestamp,
-                        feedbackMessage = successMsg
+                        feedbackMessage = successMsg,
+                        showPostSaveWhatsAppPrompt = true
                     )
                 }
                 onComplete(true, successMsg)
@@ -288,6 +297,62 @@ class TeacherAttendanceViewModel(
                 val errorMsg = "Failed to save attendance: ${e.localizedMessage ?: "Database error"}"
                 _uiState.update { it.copy(isSaving = false, errorMessage = errorMsg) }
                 onComplete(false, errorMsg)
+            }
+        }
+    }
+
+    fun openWhatsAppPushSheet(selectedStudent: StudentAttendanceItem? = null) {
+        _uiState.update {
+            it.copy(
+                showWhatsAppPushSheet = true,
+                selectedStudentForWhatsApp = selectedStudent,
+                showPostSaveWhatsAppPrompt = false
+            )
+        }
+    }
+
+    fun closeWhatsAppPushSheet() {
+        _uiState.update {
+            it.copy(
+                showWhatsAppPushSheet = false,
+                selectedStudentForWhatsApp = null
+            )
+        }
+    }
+
+    fun dismissPostSaveWhatsAppPrompt() {
+        _uiState.update { it.copy(showPostSaveWhatsAppPrompt = false) }
+    }
+
+    fun recordWhatsAppBatchAudit(dispatchedCount: Int) {
+        val currentState = _uiState.value
+        val timestamp = System.currentTimeMillis()
+        viewModelScope.launch {
+            try {
+                schoolRepository.insertAuditLog(
+                    AuditLogEntity(
+                        institutionId = currentState.institutionId,
+                        timestamp = timestamp,
+                        formattedTime = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.getDefault()).format(Date(timestamp)),
+                        action = "WHATSAPP_ATTENDANCE_PUSH_DISPATCH",
+                        entityType = "WHATSAPP_PUSH_DISPATCHER",
+                        entityId = "${currentState.selectedClass}_${currentState.selectedDate}",
+                        actorUserId = currentState.teacherId,
+                        actorName = currentState.teacherName,
+                        actorRole = "TEACHER",
+                        previousState = "COMPOSED",
+                        newState = "DISPATCHED_TO_LINKED_NUMBERS",
+                        remarks = "Computer-generated WhatsApp attendance notices pushed to $dispatchedCount students on linked mobile numbers for ${currentState.selectedClass} on ${currentState.selectedDate}."
+                    )
+                )
+                _uiState.update {
+                    it.copy(
+                        lastWhatsAppPushCount = dispatchedCount,
+                        feedbackMessage = "WhatsApp attendance notice successfully pushed to $dispatchedCount linked mobile numbers."
+                    )
+                }
+            } catch (e: Exception) {
+                // Log failed audit non-critically
             }
         }
     }
@@ -337,7 +402,8 @@ class TeacherAttendanceViewModel(
                 status = recorded?.status ?: "PRESENT",
                 remarks = recorded?.remarks ?: "",
                 historicalPercentage = student.attendancePercentage,
-                guardianPhone = student.guardianPhone
+                guardianPhone = student.guardianPhone,
+                studentPhone = student.studentPhone.ifBlank { student.guardianPhone }
             )
         }
 

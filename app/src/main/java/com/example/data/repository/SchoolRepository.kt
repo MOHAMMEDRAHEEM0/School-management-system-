@@ -3,31 +3,43 @@ package com.example.data.repository
 import com.example.data.local.dao.SchoolDao
 import com.example.data.local.entities.AcademicClassEntity
 import com.example.data.local.entities.AdmissionApplicationEntity
+import com.example.data.local.entities.AiAuditLogEntity
 import com.example.data.local.entities.AttendanceRecordEntity
 import com.example.data.local.entities.AuditLogEntity
 import com.example.data.local.entities.CertificateEntity
 import com.example.data.local.entities.CircularEntity
 import com.example.data.local.entities.ExamRecordEntity
+import com.example.data.local.entities.FeePaymentTransactionEntity
 import com.example.data.local.entities.FeeRecordEntity
+import com.example.data.local.entities.FeeStructureEntity
 import com.example.data.local.entities.GovernmentComplianceEntity
+import com.example.data.local.entities.HomeworkEntity
+import com.example.data.local.entities.HomeworkSubmissionEntity
 import com.example.data.local.entities.IdCardRecordEntity
 import com.example.data.local.entities.InchargeEditRequestEntity
 import com.example.data.local.entities.InstitutionEntity
 import com.example.data.local.entities.InstitutionalBillEntity
 import com.example.data.local.entities.NoticeMeetingEntity
+import com.example.data.local.entities.ParentWardLinkEntity
+import com.example.data.local.entities.PushNotificationEntity
 import com.example.data.local.entities.RegisterScanBatchEntity
 import com.example.data.local.entities.SchoolDiaryEntity
 import com.example.data.local.entities.SchoolInstructionEntity
 import com.example.data.local.entities.StaffEntity
 import com.example.data.local.entities.StudentEntity
+import com.example.data.local.entities.StudentLeaveRequestEntity
+import com.example.data.local.entities.SubjectEntity
 import com.example.data.local.entities.SyncQueueEntity
 import com.example.data.local.entities.TimetableSlotEntity
 import com.example.data.local.entities.UserEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
+import javax.inject.Inject
+import javax.inject.Singleton
 
-class SchoolRepository(val dao: SchoolDao) {
+@Singleton
+class SchoolRepository @Inject constructor(val dao: SchoolDao) {
 
     val userRepository: UserRepository = UserRepositoryImpl(dao)
     val attendanceRepository: AttendanceRepository = AttendanceRepositoryImpl(dao)
@@ -356,7 +368,13 @@ class SchoolRepository(val dao: SchoolDao) {
             return@withContext com.example.data.model.AuthResult.Error("Account is inactive or suspended. Please contact school administration.")
         }
 
-        val isPasswordCorrect = (user.password == cleanPassword) || (user.authPin == cleanPassword)
+        val isPasswordCorrect = com.example.security.SecurityUtils.verifyPassword(
+            rawPassword = cleanPassword,
+            salt = user.passwordSalt,
+            storedHash = user.passwordHash,
+            fallbackPlain = user.password
+        ) || (user.authPin == cleanPassword)
+
         if (!isPasswordCorrect) {
             dao.insertAuditLog(
                 AuditLogEntity(
@@ -369,19 +387,18 @@ class SchoolRepository(val dao: SchoolDao) {
                     actorRole = user.role,
                     previousState = null,
                     newState = "FAILURE",
-                    remarks = "Failed password attempt for user '${user.username}' at ${institution.name}"
+                    remarks = "Failed password attempt for user '${user.username}' at ${institution.name}",
+                    securityVerificationHash = com.example.security.SecurityUtils.generateAuditSignature(
+                        user.id, institution.institutionId, "AUTH_FAILED", "UserAuth", user.id, System.currentTimeMillis()
+                    )
                 )
             )
             return@withContext com.example.data.model.AuthResult.Error("Incorrect password. Please verify your credentials or use Forgot Password.")
         }
 
-        val parsedRole = try {
-            com.example.data.model.UserRole.valueOf(user.role)
-        } catch (e: Exception) {
-            com.example.data.model.UserRole.STUDENT
-        }
+        val parsedRole = com.example.data.model.parseUserRole(user.role)
 
-        val sessionToken = "sxa_tok_${java.util.UUID.randomUUID()}_${System.currentTimeMillis()}"
+        val sessionToken = com.example.security.SecurityUtils.generateSessionToken(user.id, institution.institutionId)
         val session = com.example.data.model.AuthSession(
             token = sessionToken,
             user = user,
@@ -401,7 +418,10 @@ class SchoolRepository(val dao: SchoolDao) {
                 actorRole = user.role,
                 previousState = "ANONYMOUS",
                 newState = "AUTHENTICATED",
-                remarks = "User '${user.username}' logged in successfully as ${parsedRole.label} for batch $batch"
+                remarks = "User '${user.username}' logged in successfully as ${parsedRole.label} for batch $batch",
+                securityVerificationHash = com.example.security.SecurityUtils.generateAuditSignature(
+                    user.id, institution.institutionId, "LOGIN_SUCCESS", "SessionRegistry", sessionToken, System.currentTimeMillis()
+                )
             )
         )
 
@@ -416,10 +436,11 @@ class SchoolRepository(val dao: SchoolDao) {
         val user = dao.getUserByUsernameOrPhone(clean)
             ?: return@withContext Result.failure(Exception("No registered account found matching '$clean'."))
 
+        val newHash = com.example.security.SecurityUtils.hashPassword(newPassword, user.passwordSalt)
         dao.updateUserPassword(user.id, newPassword)
         dao.insertAuditLog(
             AuditLogEntity(
-                institutionId = "INST-SXA-2026",
+                institutionId = user.institutionId,
                 action = "PASSWORD_RESET_EXECUTED",
                 entityType = "UserCredentials",
                 entityId = user.id,
@@ -428,7 +449,10 @@ class SchoolRepository(val dao: SchoolDao) {
                 actorRole = user.role,
                 previousState = "MASKED",
                 newState = "UPDATED",
-                remarks = "Password reset successfully completed for user '${user.username}'"
+                remarks = "Password reset successfully completed for user '${user.username}'",
+                securityVerificationHash = com.example.security.SecurityUtils.generateAuditSignature(
+                    user.id, user.institutionId, "PWD_RESET", "UserCredentials", user.id, System.currentTimeMillis()
+                )
             )
         )
         return@withContext Result.success("Password successfully updated. You may now log in.")
@@ -437,7 +461,52 @@ class SchoolRepository(val dao: SchoolDao) {
     private fun getDefaultTestUser(query: String, institutionId: String): UserEntity? {
         val q = query.trim().lowercase()
         return when {
-            q == "principal" || q == "fac-prin-01" || q == "admin" || q == "super_admin" || q == "usr-prin-01" -> {
+            q == "admin" || q == "super_admin" || q == "administrator" -> {
+                UserEntity(
+                    id = "USR-ADM-01",
+                    institutionId = institutionId,
+                    username = "admin",
+                    email = "admin@stxaviers.edu",
+                    password = "Password@123",
+                    role = "ADMIN",
+                    displayName = "Dr. Elena Vance (System Administrator)",
+                    phoneNumber = "9800000000",
+                    authPin = "9876",
+                    isOtpVerified = true,
+                    permissions = "MANAGE_INSTITUTION,CONFIGURE_ACADEMIC_YEAR,MANAGE_CLASSES,MANAGE_STAFF_DBMS,ASSIGN_TEACHERS,VIEW_ROSTER_ALL,VIEW_AUDIT_LOGS"
+                )
+            }
+            q == "teacher" || q == "faculty" -> {
+                UserEntity(
+                    id = "USR-TCH-DEMO",
+                    institutionId = institutionId,
+                    username = "teacher",
+                    email = "teacher@stxaviers.edu",
+                    password = "Password@123",
+                    role = "TEACHER",
+                    displayName = "Mrs. Sunita Kapoor (Senior Teacher)",
+                    phoneNumber = "9876543212",
+                    authPin = "1234",
+                    isOtpVerified = true,
+                    permissions = "VIEW_ROSTER_SECTION,MARK_ATTENDANCE_SECTION,SCAN_REGISTER_CAMERA,ENTER_MARKS_ASSIGNED_SUBJECT,WRITE_CLASS_DIARY"
+                )
+            }
+            q == "student" || q == "scholar" -> {
+                UserEntity(
+                    id = "USR-STU-DEMO",
+                    institutionId = institutionId,
+                    username = "student",
+                    email = "student@stxaviers.edu",
+                    password = "Password@123",
+                    role = "STUDENT",
+                    displayName = "Aarav Sharma (Scholar Roll #1)",
+                    phoneNumber = "9123456781",
+                    authPin = "1234",
+                    isOtpVerified = true,
+                    permissions = "READ_DIARY,VIEW_TIMETABLE_ASSIGNED"
+                )
+            }
+            q == "principal" || q == "fac-prin-01" || q == "usr-prin-01" -> {
                 UserEntity(
                     id = "USR-PRIN-01",
                     institutionId = institutionId,
@@ -524,4 +593,130 @@ class SchoolRepository(val dao: SchoolDao) {
             else -> null
         }
     }
+
+    // =========================================================================
+    // 17. HOMEWORK & ASSIGNMENT MANAGEMENT
+    // =========================================================================
+    fun getHomeworkForClass(classSection: String, institutionId: String = "INST-SXA-2026"): Flow<List<HomeworkEntity>> =
+        dao.getHomeworkForClass(classSection, institutionId)
+
+    fun getHomeworkForInstitution(institutionId: String = "INST-SXA-2026"): Flow<List<HomeworkEntity>> =
+        dao.getHomeworkForInstitution(institutionId)
+
+    suspend fun insertHomework(homework: HomeworkEntity) = dao.insertHomework(homework)
+
+    suspend fun deleteHomework(homeworkId: String) = dao.deleteHomework(homeworkId)
+
+    fun getSubmissionsForHomework(homeworkId: String): Flow<List<HomeworkSubmissionEntity>> =
+        dao.getSubmissionsForHomework(homeworkId)
+
+    fun getSubmissionsForStudent(studentId: String): Flow<List<HomeworkSubmissionEntity>> =
+        dao.getSubmissionsForStudent(studentId)
+
+    suspend fun insertHomeworkSubmission(submission: HomeworkSubmissionEntity) =
+        dao.insertHomeworkSubmission(submission)
+
+    suspend fun gradeHomeworkSubmission(
+        submissionId: String,
+        status: String,
+        marks: Int,
+        feedback: String,
+        auditLog: AuditLogEntity
+    ) = dao.gradeHomeworkWithAudit(submissionId, status, marks, feedback, auditLog)
+
+    // =========================================================================
+    // 18. STUDENT & STAFF LEAVE REQUESTS
+    // =========================================================================
+    fun getLeaveRequestsForInstitution(institutionId: String = "INST-SXA-2026"): Flow<List<StudentLeaveRequestEntity>> =
+        dao.getLeaveRequestsForInstitution(institutionId)
+
+    fun getLeaveRequestsForStudent(studentId: String): Flow<List<StudentLeaveRequestEntity>> =
+        dao.getLeaveRequestsForStudent(studentId)
+
+    fun getLeaveRequestsForClass(classSection: String): Flow<List<StudentLeaveRequestEntity>> =
+        dao.getLeaveRequestsForClass(classSection)
+
+    suspend fun submitLeaveRequest(request: StudentLeaveRequestEntity) =
+        dao.insertLeaveRequest(request)
+
+    suspend fun reviewLeaveRequest(
+        leaveId: String,
+        status: String,
+        reviewer: String,
+        remarks: String,
+        auditLog: AuditLogEntity
+    ) = dao.reviewLeaveRequestWithAudit(leaveId, status, reviewer, remarks, auditLog)
+
+    // =========================================================================
+    // 19. CONFIGURABLE FEE STRUCTURES & TRANSACTIONS
+    // =========================================================================
+    fun getFeeStructures(institutionId: String = "INST-SXA-2026"): Flow<List<FeeStructureEntity>> =
+        dao.getFeeStructures(institutionId)
+
+    suspend fun insertFeeStructure(structure: FeeStructureEntity) =
+        dao.insertFeeStructure(structure)
+
+    fun getPaymentTransactions(institutionId: String = "INST-SXA-2026"): Flow<List<FeePaymentTransactionEntity>> =
+        dao.getPaymentTransactions(institutionId)
+
+    fun getPaymentTransactionsForStudent(studentId: String): Flow<List<FeePaymentTransactionEntity>> =
+        dao.getPaymentTransactionsForStudent(studentId)
+
+    suspend fun recordFeePaymentAtomic(
+        feeId: String,
+        transaction: FeePaymentTransactionEntity,
+        paidPaise: Long,
+        duePaise: Long,
+        status: String,
+        auditLog: AuditLogEntity
+    ) = dao.processFeePaymentAtomic(feeId, transaction, paidPaise, duePaise, status, auditLog)
+
+    // =========================================================================
+    // 20. PUSH NOTIFICATIONS
+    // =========================================================================
+    fun getNotificationsForUser(institutionId: String = "INST-SXA-2026", userId: String): Flow<List<PushNotificationEntity>> =
+        dao.getNotificationsForUser(institutionId, userId)
+
+    fun getUnreadNotificationCount(institutionId: String = "INST-SXA-2026", userId: String): Flow<Int> =
+        dao.getUnreadNotificationCount(institutionId, userId)
+
+    suspend fun insertNotification(notification: PushNotificationEntity) =
+        dao.insertNotification(notification)
+
+    suspend fun markNotificationAsRead(notificationId: String) =
+        dao.markNotificationAsRead(notificationId)
+
+    suspend fun markAllNotificationsAsRead(institutionId: String = "INST-SXA-2026") =
+        dao.markAllNotificationsAsRead(institutionId)
+
+    // =========================================================================
+    // 21. AI AUDIT LOGS
+    // =========================================================================
+    fun getAiAuditLogs(institutionId: String = "INST-SXA-2026"): Flow<List<AiAuditLogEntity>> =
+        dao.getAiAuditLogs(institutionId)
+
+    suspend fun insertAiAuditLog(log: AiAuditLogEntity) = dao.insertAiAuditLog(log)
+
+    // =========================================================================
+    // 22. SUBJECTS MASTER
+    // =========================================================================
+    fun getSubjectsForInstitution(institutionId: String = "INST-SXA-2026"): Flow<List<SubjectEntity>> =
+        dao.getSubjectsForInstitution(institutionId)
+
+    fun getSubjectsForClass(classSection: String, institutionId: String = "INST-SXA-2026"): Flow<List<SubjectEntity>> =
+        dao.getSubjectsForClass(classSection, institutionId)
+
+    suspend fun insertSubject(subject: SubjectEntity) = dao.insertSubject(subject)
+
+    // =========================================================================
+    // 23. PARENT WARD LINKS
+    // =========================================================================
+    fun getWardsForParent(parentUserId: String, institutionId: String = "INST-SXA-2026"): Flow<List<ParentWardLinkEntity>> =
+        dao.getWardsForParent(parentUserId, institutionId)
+
+    suspend fun getWardsForParentList(parentUserId: String, institutionId: String = "INST-SXA-2026"): List<ParentWardLinkEntity> =
+        dao.getWardsForParentList(parentUserId, institutionId)
+
+    suspend fun insertParentWardLink(link: ParentWardLinkEntity) =
+        dao.insertParentWardLink(link)
 }

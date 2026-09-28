@@ -10,6 +10,12 @@ enum class UserRole(
     val clearanceTitle: String,
     val roleClaim: String
 ) {
+    ADMIN(
+        label = "System & Institutional Administrator",
+        badge = "ADMIN",
+        clearanceTitle = "Executive Administration Directorate",
+        roleClaim = "ROLE_ADMIN"
+    ),
     PRINCIPAL(
         label = "Principal & Executive Admin",
         badge = "PRINCIPAL",
@@ -33,6 +39,12 @@ enum class UserRole(
         badge = "STAFF_MGR",
         clearanceTitle = "Staff Management Desk",
         roleClaim = "ROLE_STAFF_MANAGER"
+    ),
+    TEACHER(
+        label = "Teacher & Academic Faculty",
+        badge = "TEACHER",
+        clearanceTitle = "Academic Faculty Portal",
+        roleClaim = "ROLE_TEACHER"
     ),
     TEACHING(
         label = "Teacher & Academic Faculty",
@@ -64,12 +76,86 @@ enum class UserRole(
         clearanceTitle = "Guardian Privacy Passport",
         roleClaim = "ROLE_PARENT"
     ),
+    LIBRARIAN(
+        label = "Librarian & Learning Resources",
+        badge = "LIBRARIAN",
+        clearanceTitle = "Library & Resource Center",
+        roleClaim = "ROLE_LIBRARIAN"
+    ),
+    TRANSPORT_STAFF(
+        label = "Transport Manager & Logistics Staff",
+        badge = "TRANSPORT",
+        clearanceTitle = "Fleet & Transport Logistics",
+        roleClaim = "ROLE_TRANSPORT_STAFF"
+    ),
     NON_TEACHING(
         label = "Operations & Support Staff",
         badge = "OPERATIONS",
         clearanceTitle = "Campus Operations",
         roleClaim = "ROLE_NON_TEACHING"
     )
+}
+
+// =========================================================================
+// RBAC NAVIGATION CATEGORY
+// =========================================================================
+
+enum class RbacRoleCategory(
+    val title: String,
+    val description: String,
+    val clearanceLevel: Int
+) {
+    ADMIN(
+        title = "Admin",
+        description = "Executive Administration & Institutional Governance",
+        clearanceLevel = 3
+    ),
+    TEACHER(
+        title = "Teacher",
+        description = "Academic Faculty, Attendance & Grading Portal",
+        clearanceLevel = 2
+    ),
+    STUDENT(
+        title = "Student",
+        description = "Scholar Academic Passport, Attendance & Reports",
+        clearanceLevel = 1
+    )
+}
+
+val UserRole.rbacCategory: RbacRoleCategory
+    get() = when (this) {
+        UserRole.ADMIN, UserRole.PRINCIPAL, UserRole.VICE_PRINCIPAL,
+        UserRole.STAFF_MANAGER, UserRole.OFFICE, UserRole.ACCOUNTANT,
+        UserRole.LIBRARIAN -> RbacRoleCategory.ADMIN
+
+        UserRole.TEACHER, UserRole.TEACHING, UserRole.INCHARGE -> RbacRoleCategory.TEACHER
+
+        UserRole.STUDENT, UserRole.PARENT, UserRole.NON_TEACHING,
+        UserRole.TRANSPORT_STAFF -> RbacRoleCategory.STUDENT
+    }
+
+fun parseUserRole(roleStr: String): UserRole {
+    return when (roleStr.trim().uppercase()) {
+        "ADMIN", "SUPER_ADMIN", "ADMINISTRATOR" -> UserRole.ADMIN
+        "PRINCIPAL" -> UserRole.PRINCIPAL
+        "VICE_PRINCIPAL" -> UserRole.VICE_PRINCIPAL
+        "TEACHER", "FACULTY" -> UserRole.TEACHER
+        "TEACHING" -> UserRole.TEACHING
+        "INCHARGE" -> UserRole.INCHARGE
+        "STUDENT", "SCHOLAR" -> UserRole.STUDENT
+        "PARENT", "GUARDIAN" -> UserRole.PARENT
+        "ACCOUNTANT" -> UserRole.ACCOUNTANT
+        "OFFICE" -> UserRole.OFFICE
+        "STAFF_MANAGER" -> UserRole.STAFF_MANAGER
+        "LIBRARIAN" -> UserRole.LIBRARIAN
+        "TRANSPORT", "TRANSPORT_STAFF", "DRIVER" -> UserRole.TRANSPORT_STAFF
+        "NON_TEACHING" -> UserRole.NON_TEACHING
+        else -> try {
+            UserRole.valueOf(roleStr.trim().uppercase())
+        } catch (e: Exception) {
+            UserRole.STUDENT
+        }
+    }
 }
 
 object SchoolPermissions {
@@ -133,6 +219,17 @@ object SchoolPermissions {
     const val VIEW_TIMETABLE_ASSIGNED = "VIEW_TIMETABLE_ASSIGNED"
     const val PUBLISH_CIRCULAR = "PUBLISH_CIRCULAR"
     const val VIEW_AUDIT_LOGS = "VIEW_AUDIT_LOGS"
+
+    // Library Management
+    const val MANAGE_LIBRARY = "MANAGE_LIBRARY"
+    const val ISSUE_LIBRARY_BOOK = "ISSUE_LIBRARY_BOOK"
+    const val RETURN_LIBRARY_BOOK = "RETURN_LIBRARY_BOOK"
+    const val VIEW_LIBRARY_CATALOG = "VIEW_LIBRARY_CATALOG"
+
+    // Transport Logistics
+    const val MANAGE_TRANSPORT = "MANAGE_TRANSPORT"
+    const val VIEW_TRANSPORT_ROUTES = "VIEW_TRANSPORT_ROUTES"
+    const val UPDATE_TRANSPORT_STATUS = "UPDATE_TRANSPORT_STATUS"
 }
 
 data class SecurityClaims(
@@ -140,13 +237,13 @@ data class SecurityClaims(
     val role: UserRole,
     val roleClaim: String,
     val displayName: String,
-    val phone: String,
-    val email: String,
-    val designationOrGrade: String,
+    val phone: String = "+91 98765 43210",
+    val email: String = "user@stxaviers.edu",
+    val designationOrGrade: String = "",
     val assignedClassSection: String? = null,
     val assignedSubjects: List<String> = emptyList(),
     val permissions: Set<String>,
-    val sessionToken: String,
+    val sessionToken: String = "SESSION-TOK-DEFAULT",
     val authenticatedAt: Long = System.currentTimeMillis()
 ) {
     fun hasPermission(permission: String): Boolean = permissions.contains(permission)
@@ -154,7 +251,7 @@ data class SecurityClaims(
 
 fun getDefaultPermissionsForRole(role: UserRole): Set<String> {
     return when (role) {
-        UserRole.PRINCIPAL -> setOf(
+        UserRole.ADMIN, UserRole.PRINCIPAL -> setOf(
             SchoolPermissions.MANAGE_INSTITUTION,
             SchoolPermissions.CONFIGURE_ACADEMIC_YEAR,
             SchoolPermissions.MANAGE_CLASSES,
@@ -228,7 +325,7 @@ fun getDefaultPermissionsForRole(role: UserRole): Set<String> {
             SchoolPermissions.PUBLISH_CIRCULAR,
             SchoolPermissions.VIEW_AUDIT_LOGS
         )
-        UserRole.TEACHING -> setOf(
+        UserRole.TEACHER, UserRole.TEACHING -> setOf(
             SchoolPermissions.VIEW_ROSTER_SECTION,
             SchoolPermissions.MARK_ATTENDANCE_SECTION,
             SchoolPermissions.SCAN_REGISTER_CAMERA,
@@ -274,6 +371,18 @@ fun getDefaultPermissionsForRole(role: UserRole): Set<String> {
         )
         UserRole.NON_TEACHING -> setOf(
             SchoolPermissions.VIEW_ATTENDANCE_SELF
+        )
+        UserRole.LIBRARIAN -> setOf(
+            SchoolPermissions.MANAGE_LIBRARY,
+            SchoolPermissions.ISSUE_LIBRARY_BOOK,
+            SchoolPermissions.RETURN_LIBRARY_BOOK,
+            SchoolPermissions.VIEW_LIBRARY_CATALOG,
+            SchoolPermissions.VIEW_AUDIT_LOGS
+        )
+        UserRole.TRANSPORT_STAFF -> setOf(
+            SchoolPermissions.MANAGE_TRANSPORT,
+            SchoolPermissions.VIEW_TRANSPORT_ROUTES,
+            SchoolPermissions.UPDATE_TRANSPORT_STATUS
         )
     }
 }

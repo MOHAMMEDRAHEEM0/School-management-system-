@@ -52,11 +52,22 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
 import com.example.data.local.AppDatabase
+import com.example.data.model.RbacRoleCategory
+import com.example.data.model.SchoolPermissions
 import com.example.data.model.UserRole
+import com.example.data.model.rbacCategory
 import com.example.data.repository.SchoolRepository
 import com.example.ui.components.GlassBadge
 import com.example.ui.components.GlassTopEmblemBanner
+import com.example.ui.components.RbacAccessDeniedDialog
+import com.example.ui.components.RbacDashboardHost
+import com.example.ui.components.RbacRoleSwitcherBar
+import com.example.ui.navigation.AppBottomNavigationBar
+import com.example.ui.navigation.AppDestinations
+import com.example.ui.navigation.AppNavGraph
 import com.example.ui.screens.AccountantDashboard
 import com.example.ui.screens.AuditLogsScreen
 import com.example.ui.screens.AuthScreen
@@ -78,7 +89,9 @@ import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.PureWhite
 import com.example.ui.viewmodel.SchoolViewModel
 import com.example.ui.viewmodel.SchoolViewModelFactory
+import dagger.hilt.android.AndroidEntryPoint
 
+@AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -98,13 +111,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-enum class ActiveScreen {
-    DASHBOARD,
-    REGISTER_SCAN,
-    AUDIT_LOGS,
-    AUTH
-}
-
 @Composable
 fun SchoolManagementApp(viewModel: SchoolViewModel) {
     val isAuthenticated by viewModel.isAuthenticated.collectAsState()
@@ -116,15 +122,32 @@ fun SchoolManagementApp(viewModel: SchoolViewModel) {
     val verifiedInst by viewModel.verifiedInstitution.collectAsState()
     val selectedBatch by viewModel.selectedAcademicBatch.collectAsState()
 
-    var activeScreen by remember { mutableStateOf(ActiveScreen.DASHBOARD) }
+    val navController = rememberNavController()
     var showLogoutDialog by remember { mutableStateOf(false) }
+    var accessDeniedInfo by remember { mutableStateOf<Pair<String, String>?>(null) }
+
+    fun navigateToAuditLogs() {
+        if (userClaims?.hasPermission(SchoolPermissions.VIEW_AUDIT_LOGS) == true || currentRole.rbacCategory == RbacRoleCategory.ADMIN) {
+            navController.navigate(AppDestinations.AUDIT_LOGS)
+        } else {
+            accessDeniedInfo = "Institutional Audit Logs Directorate" to "ROLE_ADMIN (Clearance Level 3)"
+        }
+    }
+
+    fun navigateToRegisterScan() {
+        if (userClaims?.hasPermission(SchoolPermissions.SCAN_REGISTER_CAMERA) == true || currentRole.rbacCategory != RbacRoleCategory.STUDENT) {
+            navController.navigate(AppDestinations.REGISTER_SCAN)
+        } else {
+            accessDeniedInfo = "Physical Register Camera OCR Scanner" to "ROLE_TEACHER or ROLE_ADMIN (Faculty Clearance Level 2+)"
+        }
+    }
 
     // If not authenticated, ALWAYS enforce the Multi-Stage Secure Entry System (AuthScreen)
     if (!isAuthenticated) {
         AuthScreen(
             viewModel = viewModel,
             onLoginSuccess = {
-                activeScreen = ActiveScreen.DASHBOARD
+                // User enters the main navigation graph automatically upon authentication
             }
         )
         return
@@ -135,6 +158,12 @@ fun SchoolManagementApp(viewModel: SchoolViewModel) {
             .fillMaxSize()
             .testTag("school_management_scaffold"),
         contentWindowInsets = WindowInsets.statusBars,
+        bottomBar = {
+            AppBottomNavigationBar(
+                navController = navController,
+                currentRole = currentRole
+            )
+        },
         topBar = {
             Column {
                 // Official Institutional Emblem Top Bar with Real-Time Sync Indicator
@@ -167,9 +196,9 @@ fun SchoolManagementApp(viewModel: SchoolViewModel) {
                             GlassBadge(
                                 text = currentRole.roleClaim.replace("ROLE_", ""),
                                 color = when (currentRole) {
-                                    UserRole.PRINCIPAL -> GovNavyPrimary
+                                    UserRole.ADMIN, UserRole.PRINCIPAL -> GovNavyPrimary
                                     UserRole.INCHARGE -> GovSaffron
-                                    UserRole.TEACHING -> GovGreen
+                                    UserRole.TEACHER, UserRole.TEACHING -> GovGreen
                                     UserRole.STUDENT -> GovNavyDark
                                     UserRole.PARENT -> GovSaffron
                                     else -> Color(0xFFD97706)
@@ -221,6 +250,19 @@ fun SchoolManagementApp(viewModel: SchoolViewModel) {
                         }
                     }
                 }
+
+                // RBAC Role Navigation Switcher Bar (Admin | Teacher | Student)
+                val navBackStackEntry by navController.currentBackStackEntryAsState()
+                val currentRoute = navBackStackEntry?.destination?.route
+                if (currentRoute == null || currentRoute == AppDestinations.DASHBOARD) {
+                    RbacRoleSwitcherBar(
+                        currentRole = currentRole,
+                        userClaims = userClaims,
+                        onSwitchRole = { newRole ->
+                            viewModel.switchRole(newRole)
+                        }
+                    )
+                }
             }
         }
     ) { innerPadding ->
@@ -229,63 +271,34 @@ fun SchoolManagementApp(viewModel: SchoolViewModel) {
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            Crossfade(targetState = activeScreen, label = "ScreenTransition") { screen ->
-                when (screen) {
-                    ActiveScreen.AUTH -> {
-                        AuthScreen(
-                            viewModel = viewModel,
-                            onLoginSuccess = { activeScreen = ActiveScreen.DASHBOARD }
-                        )
-                    }
-                    ActiveScreen.REGISTER_SCAN -> {
-                        RegisterScanScreen(
-                            viewModel = viewModel,
-                            onNavigateBack = { activeScreen = ActiveScreen.DASHBOARD }
-                        )
-                    }
-                    ActiveScreen.AUDIT_LOGS -> {
-                        AuditLogsScreen(
-                            viewModel = viewModel,
-                            onNavigateBack = { activeScreen = ActiveScreen.DASHBOARD }
-                        )
-                    }
-                    ActiveScreen.DASHBOARD -> {
-                        when (currentRole) {
-                            UserRole.PRINCIPAL -> {
-                                PrincipalDashboard(
-                                    viewModel = viewModel,
-                                    onNavigateToAuditLogs = { activeScreen = ActiveScreen.AUDIT_LOGS }
-                                )
-                            }
-                            UserRole.INCHARGE -> {
-                                InchargeDashboard(
-                                    viewModel = viewModel,
-                                    onNavigateToScanScreen = { activeScreen = ActiveScreen.REGISTER_SCAN }
-                                )
-                            }
-                            UserRole.TEACHING -> {
-                                TeacherDashboard(
-                                    viewModel = viewModel,
-                                    onNavigateToScanScreen = { activeScreen = ActiveScreen.REGISTER_SCAN }
-                                )
-                            }
-                            UserRole.STUDENT, UserRole.PARENT -> {
-                                StudentDashboard(viewModel = viewModel)
-                            }
-                            UserRole.ACCOUNTANT -> {
-                                AccountantDashboard(viewModel = viewModel)
-                            }
-                            else -> {
-                                PrincipalDashboard(
-                                    viewModel = viewModel,
-                                    onNavigateToAuditLogs = { activeScreen = ActiveScreen.AUDIT_LOGS }
-                                )
-                            }
-                        }
-                    }
+            AppNavGraph(
+                navController = navController,
+                viewModel = viewModel,
+                currentRole = currentRole,
+                onNavigateToAuditLogs = { navigateToAuditLogs() },
+                onNavigateToScanScreen = { navigateToRegisterScan() },
+                onAccessDenied = { resource, required ->
+                    accessDeniedInfo = resource to required
+                }
+            )
+        }
+    }
+
+    // RBAC 403 Forbidden Access Denied Dialog
+    accessDeniedInfo?.let { (resource, required) ->
+        RbacAccessDeniedDialog(
+            requiredRole = required,
+            currentRole = currentRole,
+            resourceName = resource,
+            onDismiss = { accessDeniedInfo = null },
+            onSwitchToAuthorizedRole = {
+                if (required.contains("ADMIN")) {
+                    viewModel.switchRole(UserRole.ADMIN)
+                } else if (required.contains("TEACHER")) {
+                    viewModel.switchRole(UserRole.TEACHER)
                 }
             }
-        }
+        )
     }
 
     // Secure Logout Confirmation Dialog

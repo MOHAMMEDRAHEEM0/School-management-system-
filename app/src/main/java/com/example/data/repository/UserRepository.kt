@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.withContext
+import javax.inject.Inject
+import javax.inject.Singleton
 
 interface UserRepository {
     val allUsers: Flow<List<UserEntity>>
@@ -29,10 +31,11 @@ interface UserRepository {
     suspend fun insertTeachers(teachers: List<TeacherEntity>)
 }
 
-class UserRepositoryImpl(
-    private val dao: SchoolDao,
-    private val externalScope: CoroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+@Singleton
+class UserRepositoryImpl @Inject constructor(
+    private val dao: SchoolDao
 ) : UserRepository {
+    private val externalScope: CoroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     override val allUsers: Flow<List<UserEntity>> = dao.getAllUsers()
     override val usersState: StateFlow<List<UserEntity>> = allUsers

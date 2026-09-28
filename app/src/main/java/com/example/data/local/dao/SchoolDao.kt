@@ -7,28 +7,71 @@ import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
 import com.example.data.local.entities.AcademicClassEntity
+import com.example.data.local.entities.AcademicPromotionHistoryEntity
+import com.example.data.local.entities.AcademicYearEntity
 import com.example.data.local.entities.AdmissionApplicationEntity
+import com.example.data.local.entities.AiAuditLogEntity
+import com.example.data.local.entities.AttendanceCorrectionEntity
 import com.example.data.local.entities.AttendanceEntity
 import com.example.data.local.entities.AttendanceRecordEntity
 import com.example.data.local.entities.AuditLogEntity
+import com.example.data.local.entities.AutomatedMessageDispatchEntity
+import com.example.data.local.entities.CampusEntity
 import com.example.data.local.entities.CertificateEntity
 import com.example.data.local.entities.CircularEntity
+import com.example.data.local.entities.ClassroomEntity
+import com.example.data.local.entities.CloudDocumentEntity
+import com.example.data.local.entities.DeviceTokenEntity
+import com.example.data.local.entities.DisasterRecoveryBackupEntity
+import com.example.data.local.entities.DurableOutboxEntity
+import com.example.data.local.entities.EmergencyContactEntity
 import com.example.data.local.entities.ExamRecordEntity
+import com.example.data.local.entities.ExamScheduleEntity
+import com.example.data.local.entities.FeatureFlagEntity
+import com.example.data.local.entities.FeeDiscountEntity
+import com.example.data.local.entities.FeeInvoiceEntity
+import com.example.data.local.entities.FeePaymentTransactionEntity
 import com.example.data.local.entities.FeeRecordEntity
+import com.example.data.local.entities.FeeStructureEntity
+import com.example.data.local.entities.FinancialLedgerEntryEntity
 import com.example.data.local.entities.GovernmentComplianceEntity
+import com.example.data.local.entities.GradingSchemeEntity
+import com.example.data.local.entities.HomeworkEntity
+import com.example.data.local.entities.HomeworkSubmissionEntity
 import com.example.data.local.entities.IdCardRecordEntity
 import com.example.data.local.entities.InchargeEditRequestEntity
 import com.example.data.local.entities.InstitutionEntity
 import com.example.data.local.entities.InstitutionalBillEntity
+import com.example.data.local.entities.InventoryItemEntity
+import com.example.data.local.entities.InventoryTransactionEntity
+import com.example.data.local.entities.LibraryBookEntity
+import com.example.data.local.entities.LibraryIssueEntity
 import com.example.data.local.entities.NoticeMeetingEntity
+import com.example.data.local.entities.NotificationPreferenceEntity
+import com.example.data.local.entities.ParentEntity
+import com.example.data.local.entities.ParentWardLinkEntity
+import com.example.data.local.entities.PaymentOrderEntity
+import com.example.data.local.entities.PushNotificationEntity
 import com.example.data.local.entities.RegisterScanBatchEntity
+import com.example.data.local.entities.RolePermissionEntity
 import com.example.data.local.entities.SchoolDiaryEntity
 import com.example.data.local.entities.SchoolInstructionEntity
+import com.example.data.local.entities.SchoolSettingsEntity
+import com.example.data.local.entities.SectionEntity
 import com.example.data.local.entities.StaffEntity
+import com.example.data.local.entities.StaffLeaveRequestEntity
+import com.example.data.local.entities.StudentEnrollmentEntity
 import com.example.data.local.entities.StudentEntity
+import com.example.data.local.entities.StudentLeaveRequestEntity
+import com.example.data.local.entities.SubjectEntity
+import com.example.data.local.entities.SupportTicketEntity
 import com.example.data.local.entities.SyncQueueEntity
+import com.example.data.local.entities.TeacherAssignmentEntity
 import com.example.data.local.entities.TeacherEntity
 import com.example.data.local.entities.TimetableSlotEntity
+import com.example.data.local.entities.TransportPickupPointEntity
+import com.example.data.local.entities.TransportRouteEntity
+import com.example.data.local.entities.TransportVehicleEntity
 import com.example.data.local.entities.UserEntity
 import kotlinx.coroutines.flow.Flow
 
@@ -468,6 +511,24 @@ interface SchoolDao {
     @Query("SELECT * FROM audit_logs ORDER BY timestamp DESC")
     fun getAllAuditLogs(): Flow<List<AuditLogEntity>>
 
+    @Query("SELECT * FROM audit_logs ORDER BY logId ASC")
+    suspend fun getAllAuditLogsAsc(): List<AuditLogEntity>
+
+    @Query("SELECT * FROM audit_logs ORDER BY logId DESC LIMIT 1")
+    suspend fun getLatestAuditLog(): AuditLogEntity?
+
+    @Query("SELECT * FROM audit_logs WHERE syncStatus = 'PENDING_SYNC' ORDER BY timestamp ASC")
+    suspend fun getPendingAuditLogs(): List<AuditLogEntity>
+
+    @Query("SELECT COUNT(*) FROM audit_logs WHERE syncStatus = 'PENDING_SYNC'")
+    fun getPendingSyncCount(): Flow<Int>
+
+    @Query("SELECT * FROM audit_logs WHERE interactionType = :type ORDER BY timestamp DESC")
+    fun getAuditLogsByInteractionType(type: String): Flow<List<AuditLogEntity>>
+
+    @Query("UPDATE audit_logs SET syncStatus = :status, syncTimestamp = :syncTimestamp, encryptedPayload = :encryptedPayload WHERE logId IN (:logIds)")
+    suspend fun markAuditLogsSynced(logIds: List<Long>, status: String, syncTimestamp: Long, encryptedPayload: String)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAuditLog(log: AuditLogEntity)
 
@@ -606,4 +667,603 @@ interface SchoolDao {
         principalApproveIdCard(cardId, status, remarks, approvedBy)
         insertAuditLog(auditLog)
     }
+
+    // =========================================================================
+    // 19. HOMEWORK & ASSIGNMENT MANAGEMENT
+    // =========================================================================
+    @Query("SELECT * FROM homework_assignments WHERE institutionId = :institutionId ORDER BY createdAt DESC")
+    fun getHomeworkForInstitution(institutionId: String): Flow<List<HomeworkEntity>>
+
+    @Query("SELECT * FROM homework_assignments WHERE classSection = :classSection AND institutionId = :institutionId ORDER BY dueDate ASC")
+    fun getHomeworkForClass(classSection: String, institutionId: String): Flow<List<HomeworkEntity>>
+
+    @Query("SELECT * FROM homework_assignments WHERE homeworkId = :homeworkId LIMIT 1")
+    suspend fun getHomeworkById(homeworkId: String): HomeworkEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertHomework(homework: HomeworkEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertHomeworkList(list: List<HomeworkEntity>)
+
+    @Query("DELETE FROM homework_assignments WHERE homeworkId = :homeworkId")
+    suspend fun deleteHomework(homeworkId: String)
+
+    @Query("SELECT * FROM homework_submissions WHERE homeworkId = :homeworkId ORDER BY submissionTimestamp ASC")
+    fun getSubmissionsForHomework(homeworkId: String): Flow<List<HomeworkSubmissionEntity>>
+
+    @Query("SELECT * FROM homework_submissions WHERE studentId = :studentId ORDER BY submissionTimestamp DESC")
+    fun getSubmissionsForStudent(studentId: String): Flow<List<HomeworkSubmissionEntity>>
+
+    @Query("SELECT * FROM homework_submissions WHERE homeworkId = :homeworkId AND studentId = :studentId LIMIT 1")
+    suspend fun getSubmission(homeworkId: String, studentId: String): HomeworkSubmissionEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertHomeworkSubmission(submission: HomeworkSubmissionEntity)
+
+    @Query("UPDATE homework_submissions SET status = :status, marksObtained = :marks, teacherFeedback = :feedback, gradedAt = :gradedAt WHERE submissionId = :submissionId")
+    suspend fun gradeHomeworkSubmission(
+        submissionId: String,
+        status: String,
+        marks: Int,
+        feedback: String,
+        gradedAt: Long = System.currentTimeMillis()
+    )
+
+    // =========================================================================
+    // 20. STUDENT & STAFF LEAVE REQUESTS
+    // =========================================================================
+    @Query("SELECT * FROM leave_requests WHERE institutionId = :institutionId ORDER BY appliedTimestamp DESC")
+    fun getLeaveRequestsForInstitution(institutionId: String): Flow<List<StudentLeaveRequestEntity>>
+
+    @Query("SELECT * FROM leave_requests WHERE studentId = :studentId ORDER BY appliedTimestamp DESC")
+    fun getLeaveRequestsForStudent(studentId: String): Flow<List<StudentLeaveRequestEntity>>
+
+    @Query("SELECT * FROM leave_requests WHERE classSection = :classSection ORDER BY appliedTimestamp DESC")
+    fun getLeaveRequestsForClass(classSection: String): Flow<List<StudentLeaveRequestEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertLeaveRequest(request: StudentLeaveRequestEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertLeaveRequests(requests: List<StudentLeaveRequestEntity>)
+
+    @Query("UPDATE leave_requests SET status = :status, reviewedBy = :reviewer, reviewerRemarks = :remarks, reviewedTimestamp = :timestamp WHERE leaveId = :leaveId")
+    suspend fun updateLeaveRequestStatus(
+        leaveId: String,
+        status: String,
+        reviewer: String,
+        remarks: String,
+        timestamp: Long = System.currentTimeMillis()
+    )
+
+    // =========================================================================
+    // 21. FEE STRUCTURES & TRANSACTIONS
+    // =========================================================================
+    @Query("SELECT * FROM fee_structures WHERE institutionId = :institutionId ORDER BY grade ASC")
+    fun getFeeStructures(institutionId: String): Flow<List<FeeStructureEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertFeeStructure(structure: FeeStructureEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertFeeStructures(structures: List<FeeStructureEntity>)
+
+    @Query("SELECT * FROM fee_payment_transactions WHERE institutionId = :institutionId ORDER BY timestamp DESC")
+    fun getPaymentTransactions(institutionId: String): Flow<List<FeePaymentTransactionEntity>>
+
+    @Query("SELECT * FROM fee_payment_transactions WHERE studentId = :studentId ORDER BY timestamp DESC")
+    fun getPaymentTransactionsForStudent(studentId: String): Flow<List<FeePaymentTransactionEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPaymentTransaction(txn: FeePaymentTransactionEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPaymentTransactions(txns: List<FeePaymentTransactionEntity>)
+
+    // =========================================================================
+    // 22. PUSH NOTIFICATIONS
+    // =========================================================================
+    @Query("SELECT * FROM push_notifications WHERE institutionId = :institutionId AND (recipientUserId = 'ALL' OR recipientUserId = :userId) ORDER BY timestamp DESC")
+    fun getNotificationsForUser(institutionId: String, userId: String): Flow<List<PushNotificationEntity>>
+
+    @Query("SELECT COUNT(*) FROM push_notifications WHERE institutionId = :institutionId AND (recipientUserId = 'ALL' OR recipientUserId = :userId) AND isRead = 0")
+    fun getUnreadNotificationCount(institutionId: String, userId: String): Flow<Int>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertNotification(notification: PushNotificationEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertNotifications(notifications: List<PushNotificationEntity>)
+
+    @Query("UPDATE push_notifications SET isRead = 1 WHERE notificationId = :notificationId")
+    suspend fun markNotificationAsRead(notificationId: String)
+
+    @Query("UPDATE push_notifications SET isRead = 1 WHERE institutionId = :institutionId")
+    suspend fun markAllNotificationsAsRead(institutionId: String)
+
+    // =========================================================================
+    // 23. AI AUDIT LOGS
+    // =========================================================================
+    @Query("SELECT * FROM ai_audit_logs WHERE institutionId = :institutionId ORDER BY timestamp DESC")
+    fun getAiAuditLogs(institutionId: String): Flow<List<AiAuditLogEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAiAuditLog(log: AiAuditLogEntity)
+
+    // =========================================================================
+    // 24. SUBJECTS MASTER
+    // =========================================================================
+    @Query("SELECT * FROM subjects WHERE institutionId = :institutionId ORDER BY classSection ASC, subjectName ASC")
+    fun getSubjectsForInstitution(institutionId: String): Flow<List<SubjectEntity>>
+
+    @Query("SELECT * FROM subjects WHERE classSection = :classSection AND institutionId = :institutionId ORDER BY subjectName ASC")
+    fun getSubjectsForClass(classSection: String, institutionId: String): Flow<List<SubjectEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSubject(subject: SubjectEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSubjects(subjects: List<SubjectEntity>)
+
+    // =========================================================================
+    // 25. PARENT WARD LINKS
+    // =========================================================================
+    @Query("SELECT * FROM parent_ward_links WHERE parentUserId = :parentUserId AND institutionId = :institutionId")
+    fun getWardsForParent(parentUserId: String, institutionId: String): Flow<List<ParentWardLinkEntity>>
+
+    @Query("SELECT * FROM parent_ward_links WHERE parentUserId = :parentUserId AND institutionId = :institutionId")
+    suspend fun getWardsForParentList(parentUserId: String, institutionId: String): List<ParentWardLinkEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertParentWardLink(link: ParentWardLinkEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertParentWardLinks(links: List<ParentWardLinkEntity>)
+
+    // =========================================================================
+    // 26. ATOMIC TRANSACTION WORKFLOWS
+    // =========================================================================
+    @Transaction
+    suspend fun processFeePaymentAtomic(
+        feeId: String,
+        transaction: FeePaymentTransactionEntity,
+        paidPaise: Long,
+        duePaise: Long,
+        status: String,
+        auditLog: AuditLogEntity
+    ) {
+        insertPaymentTransaction(transaction)
+        recordFeePayment(
+            feeId = feeId,
+            paid = paidPaise,
+            due = duePaise,
+            status = status,
+            receipt = transaction.receiptNumber,
+            date = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date(transaction.timestamp)),
+            mode = transaction.paymentMode
+        )
+        insertAuditLog(auditLog)
+    }
+
+    @Transaction
+    suspend fun gradeHomeworkWithAudit(
+        submissionId: String,
+        status: String,
+        marks: Int,
+        feedback: String,
+        auditLog: AuditLogEntity
+    ) {
+        gradeHomeworkSubmission(submissionId, status, marks, feedback)
+        insertAuditLog(auditLog)
+    }
+
+    @Transaction
+    suspend fun reviewLeaveRequestWithAudit(
+        leaveId: String,
+        status: String,
+        reviewer: String,
+        remarks: String,
+        auditLog: AuditLogEntity
+    ) {
+        updateLeaveRequestStatus(leaveId, status, reviewer, remarks)
+        insertAuditLog(auditLog)
+    }
+
+    // =========================================================================
+    // 25. CAMPUS & ACADEMIC YEARS
+    // =========================================================================
+    @Query("SELECT * FROM campuses WHERE institutionId = :institutionId")
+    fun getCampuses(institutionId: String): Flow<List<CampusEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertCampus(campus: CampusEntity)
+
+    @Query("SELECT * FROM academic_years WHERE institutionId = :institutionId ORDER BY startDate DESC")
+    fun getAcademicYears(institutionId: String): Flow<List<AcademicYearEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAcademicYear(year: AcademicYearEntity)
+
+    @Query("SELECT * FROM academic_years WHERE institutionId = :institutionId AND isCurrent = 1 LIMIT 1")
+    suspend fun getCurrentAcademicYear(institutionId: String): AcademicYearEntity?
+
+    // =========================================================================
+    // 26. ROLE PERMISSIONS (RBAC)
+    // =========================================================================
+    @Query("SELECT * FROM role_permissions WHERE institutionId = :institutionId AND role = :role")
+    fun getPermissionsForRole(institutionId: String, role: String): Flow<List<RolePermissionEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertRolePermissions(permissions: List<RolePermissionEntity>)
+
+    // =========================================================================
+    // 27. PARENTS & EMERGENCY CONTACTS
+    // =========================================================================
+    @Query("SELECT * FROM parents WHERE institutionId = :institutionId")
+    fun getParents(institutionId: String): Flow<List<ParentEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertParent(parent: ParentEntity)
+
+    @Query("SELECT * FROM emergency_contacts WHERE studentId = :studentId ORDER BY priorityOrder ASC")
+    fun getEmergencyContactsForStudent(studentId: String): Flow<List<EmergencyContactEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertEmergencyContact(contact: EmergencyContactEntity)
+
+    // =========================================================================
+    // 28. STUDENT ENROLLMENTS, SECTIONS & CLASSROOMS
+    // =========================================================================
+    @Query("SELECT * FROM student_enrollments WHERE academicYear = :academicYear AND institutionId = :institutionId")
+    fun getEnrollmentsByYear(academicYear: String, institutionId: String): Flow<List<StudentEnrollmentEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertEnrollment(enrollment: StudentEnrollmentEntity)
+
+    @Query("SELECT * FROM sections WHERE institutionId = :institutionId")
+    fun getSections(institutionId: String): Flow<List<SectionEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSection(section: SectionEntity)
+
+    @Query("SELECT * FROM classrooms WHERE institutionId = :institutionId")
+    fun getClassrooms(institutionId: String): Flow<List<ClassroomEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertClassroom(classroom: ClassroomEntity)
+
+    // =========================================================================
+    // 29. TEACHER ASSIGNMENTS & ATTENDANCE CORRECTIONS
+    // =========================================================================
+    @Query("SELECT * FROM teacher_assignments WHERE institutionId = :institutionId AND academicYear = :academicYear")
+    fun getTeacherAssignments(institutionId: String, academicYear: String): Flow<List<TeacherAssignmentEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertTeacherAssignment(assignment: TeacherAssignmentEntity)
+
+    @Query("SELECT * FROM attendance_corrections WHERE institutionId = :institutionId ORDER BY timestamp DESC")
+    fun getAttendanceCorrections(institutionId: String): Flow<List<AttendanceCorrectionEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAttendanceCorrection(correction: AttendanceCorrectionEntity)
+
+    // =========================================================================
+    // 30. STAFF LEAVE REQUESTS
+    // =========================================================================
+    @Query("SELECT * FROM staff_leave_requests WHERE institutionId = :institutionId ORDER BY appliedTimestamp DESC")
+    fun getStaffLeaveRequests(institutionId: String): Flow<List<StaffLeaveRequestEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertStaffLeaveRequest(leave: StaffLeaveRequestEntity)
+
+    // =========================================================================
+    // 31. EXAM SCHEDULES & GRADING SCHEMES
+    // =========================================================================
+    @Query("SELECT * FROM exam_schedules WHERE institutionId = :institutionId AND academicYear = :academicYear ORDER BY examDate ASC")
+    fun getExamSchedules(institutionId: String, academicYear: String): Flow<List<ExamScheduleEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertExamSchedule(schedule: ExamScheduleEntity)
+
+    @Query("SELECT * FROM grading_schemes WHERE institutionId = :institutionId ORDER BY minPercentage DESC")
+    fun getGradingSchemes(institutionId: String): Flow<List<GradingSchemeEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertGradingSchemes(schemes: List<GradingSchemeEntity>)
+
+    // =========================================================================
+    // 32. FEE DISCOUNTS & INVOICES
+    // =========================================================================
+    @Query("SELECT * FROM fee_discounts WHERE studentId = :studentId AND institutionId = :institutionId")
+    fun getDiscountsForStudent(studentId: String, institutionId: String): Flow<List<FeeDiscountEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertFeeDiscount(discount: FeeDiscountEntity)
+
+    @Query("SELECT * FROM fee_invoices WHERE institutionId = :institutionId ORDER BY dueDate ASC")
+    fun getInvoices(institutionId: String): Flow<List<FeeInvoiceEntity>>
+
+    @Query("SELECT * FROM fee_invoices WHERE studentId = :studentId ORDER BY dueDate ASC")
+    fun getInvoicesForStudent(studentId: String): Flow<List<FeeInvoiceEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertInvoice(invoice: FeeInvoiceEntity)
+
+    // =========================================================================
+    // 33. DEVICE TOKENS (PUSH NOTIFICATIONS)
+    // =========================================================================
+    @Query("SELECT * FROM device_tokens WHERE userId = :userId LIMIT 1")
+    suspend fun getDeviceToken(userId: String): DeviceTokenEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertDeviceToken(token: DeviceTokenEntity)
+
+    // =========================================================================
+    // 34. LIBRARY BOOKS & ISSUES
+    // =========================================================================
+    @Query("SELECT * FROM library_books WHERE institutionId = :institutionId ORDER BY title ASC")
+    fun getLibraryBooks(institutionId: String): Flow<List<LibraryBookEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertLibraryBook(book: LibraryBookEntity)
+
+    @Query("SELECT * FROM library_issues WHERE institutionId = :institutionId ORDER BY issueDate DESC")
+    fun getLibraryIssues(institutionId: String): Flow<List<LibraryIssueEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertLibraryIssue(issue: LibraryIssueEntity)
+
+    // =========================================================================
+    // 35. TRANSPORTATION ROUTES, VEHICLES & STOPS
+    // =========================================================================
+    @Query("SELECT * FROM transport_routes WHERE institutionId = :institutionId")
+    fun getTransportRoutes(institutionId: String): Flow<List<TransportRouteEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertTransportRoute(route: TransportRouteEntity)
+
+    @Query("SELECT * FROM transport_vehicles WHERE institutionId = :institutionId")
+    fun getTransportVehicles(institutionId: String): Flow<List<TransportVehicleEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertTransportVehicle(vehicle: TransportVehicleEntity)
+
+    @Query("SELECT * FROM transport_pickup_points WHERE routeId = :routeId")
+    fun getPickupPoints(routeId: String): Flow<List<TransportPickupPointEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPickupPoint(point: TransportPickupPointEntity)
+
+    // =========================================================================
+    // 36. INVENTORY ITEMS & TRANSACTIONS
+    // =========================================================================
+    @Query("SELECT * FROM inventory_items WHERE institutionId = :institutionId")
+    fun getInventoryItems(institutionId: String): Flow<List<InventoryItemEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertInventoryItem(item: InventoryItemEntity)
+
+    @Query("SELECT * FROM inventory_transactions WHERE institutionId = :institutionId ORDER BY timestamp DESC")
+    fun getInventoryTransactions(institutionId: String): Flow<List<InventoryTransactionEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertInventoryTransaction(txn: InventoryTransactionEntity)
+
+    // =========================================================================
+    // 37. SUPPORT TICKETS
+    // =========================================================================
+    @Query("SELECT * FROM support_tickets WHERE institutionId = :institutionId ORDER BY createdAt DESC")
+    fun getSupportTickets(institutionId: String): Flow<List<SupportTicketEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSupportTicket(ticket: SupportTicketEntity)
+
+    // =========================================================================
+    // 38. SCHOOL SETTINGS & FEATURE FLAGS
+    // =========================================================================
+    @Query("SELECT * FROM school_settings WHERE institutionId = :institutionId")
+    fun getSchoolSettings(institutionId: String): Flow<List<SchoolSettingsEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSchoolSetting(setting: SchoolSettingsEntity)
+
+    @Query("SELECT * FROM feature_flags WHERE institutionId = :institutionId")
+    fun getFeatureFlags(institutionId: String): Flow<List<FeatureFlagEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertFeatureFlag(flag: FeatureFlagEntity)
+
+    // =========================================================================
+    // 39. ENTERPRISE DURABLE OUTBOX QUEUE
+    // =========================================================================
+    @Query("SELECT * FROM durable_outbox WHERE institutionId = :institutionId AND (status = 'PENDING' OR status = 'FAILED' OR status = 'IN_FLIGHT') ORDER BY createdAt ASC")
+    fun getPendingOutbox(institutionId: String): Flow<List<DurableOutboxEntity>>
+
+    @Query("SELECT * FROM durable_outbox WHERE institutionId = :institutionId AND status = 'PENDING' AND nextAttemptAt <= :now ORDER BY createdAt ASC LIMIT :limit")
+    suspend fun getReadyOutboxItems(institutionId: String, now: Long, limit: Int = 50): List<DurableOutboxEntity>
+
+    @Query("SELECT * FROM durable_outbox WHERE idempotencyKey = :key LIMIT 1")
+    suspend fun getOutboxByIdempotencyKey(key: String): DurableOutboxEntity?
+
+    @Query("SELECT COUNT(*) FROM durable_outbox WHERE institutionId = :institutionId AND (status = 'PENDING' OR status = 'FAILED')")
+    fun getPendingOutboxCount(institutionId: String): Flow<Int>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOutbox(item: DurableOutboxEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOutboxItems(items: List<DurableOutboxEntity>)
+
+    @Update
+    suspend fun updateOutbox(item: DurableOutboxEntity)
+
+    @Query("UPDATE durable_outbox SET status = 'ACKNOWLEDGED', serverAckToken = :ackToken, serverAckTimestamp = :ackTimestamp WHERE outboxId = :outboxId")
+    suspend fun acknowledgeOutboxItem(outboxId: String, ackToken: String, ackTimestamp: Long)
+
+    @Query("UPDATE durable_outbox SET status = 'FAILED', errorMessage = :error, retryCount = :retryCount, nextAttemptAt = :nextAttempt, lastAttemptAt = :lastAttempt WHERE outboxId = :outboxId")
+    suspend fun markOutboxItemFailed(outboxId: String, error: String, retryCount: Int, nextAttempt: Long, lastAttempt: Long)
+
+    @Query("UPDATE durable_outbox SET status = 'CONFLICT', errorMessage = :error WHERE outboxId = :outboxId")
+    suspend fun markOutboxItemConflict(outboxId: String, error: String)
+
+    @Query("DELETE FROM durable_outbox WHERE outboxId = :outboxId")
+    suspend fun deleteOutboxItem(outboxId: String)
+
+    @Query("DELETE FROM durable_outbox WHERE status = 'ACKNOWLEDGED' AND serverAckTimestamp < :cutoffTime")
+    suspend fun purgeOldAcknowledgedOutbox(cutoffTime: Long)
+
+    // =========================================================================
+    // 40. SECURE CLOUD DOCUMENT STORAGE
+    // =========================================================================
+    @Query("SELECT * FROM cloud_documents WHERE institutionId = :institutionId AND ownerId = :ownerId ORDER BY uploadedTimestamp DESC")
+    fun getDocumentsForOwner(institutionId: String, ownerId: String): Flow<List<CloudDocumentEntity>>
+
+    @Query("SELECT * FROM cloud_documents WHERE institutionId = :institutionId AND category = :category ORDER BY uploadedTimestamp DESC")
+    fun getDocumentsByCategory(institutionId: String, category: String): Flow<List<CloudDocumentEntity>>
+
+    @Query("SELECT * FROM cloud_documents WHERE institutionId = :institutionId ORDER BY uploadedTimestamp DESC")
+    fun getAllDocuments(institutionId: String): Flow<List<CloudDocumentEntity>>
+
+    @Query("SELECT * FROM cloud_documents WHERE documentId = :documentId LIMIT 1")
+    suspend fun getDocumentById(documentId: String): CloudDocumentEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertDocument(document: CloudDocumentEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertDocuments(documents: List<CloudDocumentEntity>)
+
+    @Query("UPDATE cloud_documents SET isVerified = :isVerified, verifiedByUserId = :verifierId WHERE documentId = :documentId")
+    suspend fun verifyDocument(documentId: String, isVerified: Boolean, verifierId: String)
+
+    @Query("DELETE FROM cloud_documents WHERE documentId = :documentId")
+    suspend fun deleteDocument(documentId: String)
+
+    // =========================================================================
+    // 41. FCM NOTIFICATION PREFERENCES
+    // =========================================================================
+    @Query("SELECT * FROM notification_preferences WHERE userId = :userId LIMIT 1")
+    fun getNotificationPreferences(userId: String): Flow<NotificationPreferenceEntity?>
+
+    @Query("SELECT * FROM notification_preferences WHERE userId = :userId LIMIT 1")
+    suspend fun getNotificationPreferencesDirect(userId: String): NotificationPreferenceEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertNotificationPreferences(prefs: NotificationPreferenceEntity)
+
+    // =========================================================================
+    // 42. DISASTER RECOVERY & AUTOMATED BACKUP AUDIT
+    // =========================================================================
+    @Query("SELECT * FROM disaster_recovery_backups WHERE institutionId = :institutionId ORDER BY snapshotTimestamp DESC")
+    fun getAllBackups(institutionId: String): Flow<List<DisasterRecoveryBackupEntity>>
+
+    @Query("SELECT * FROM disaster_recovery_backups WHERE backupId = :backupId LIMIT 1")
+    suspend fun getBackupById(backupId: String): DisasterRecoveryBackupEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertBackup(backup: DisasterRecoveryBackupEntity)
+
+    @Query("UPDATE disaster_recovery_backups SET restorationTested = :tested, restoreTestedTimestamp = :testedTime WHERE backupId = :backupId")
+    suspend fun markBackupRestoreTested(backupId: String, tested: Boolean, testedTime: Long)
+
+    // =========================================================================
+    // 43. ACADEMIC PROMOTION HISTORY & SESSION ISOLATION
+    // =========================================================================
+    @Query("SELECT * FROM academic_promotion_history WHERE institutionId = :institutionId AND studentId = :studentId ORDER BY timestamp DESC")
+    fun getPromotionHistoryForStudent(institutionId: String, studentId: String): Flow<List<AcademicPromotionHistoryEntity>>
+
+    @Query("SELECT * FROM academic_promotion_history WHERE institutionId = :institutionId ORDER BY timestamp DESC")
+    fun getAllPromotionHistory(institutionId: String): Flow<List<AcademicPromotionHistoryEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPromotionRecord(record: AcademicPromotionHistoryEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPromotionRecords(records: List<AcademicPromotionHistoryEntity>)
+
+    @Query("UPDATE academic_years SET isLocked = :isLocked WHERE academicYearId = :yearId")
+    suspend fun setAcademicYearLock(yearId: String, isLocked: Boolean)
+
+    @Query("UPDATE academic_years SET isCurrent = CASE WHEN academicYearId = :yearId THEN 1 ELSE 0 END WHERE institutionId = :institutionId")
+    suspend fun setCurrentAcademicYear(institutionId: String, yearId: String)
+
+    @Transaction
+    suspend fun promoteStudentWithAudit(
+        oldEnrollmentId: String,
+        newEnrollment: StudentEnrollmentEntity,
+        promotionRecord: AcademicPromotionHistoryEntity,
+        auditLog: AuditLogEntity
+    ) {
+        updateStudentEnrollmentStatus(oldEnrollmentId, "PROMOTED")
+        insertEnrollment(newEnrollment)
+        insertPromotionRecord(promotionRecord)
+        insertAuditLog(auditLog)
+    }
+
+    @Query("UPDATE student_enrollments SET enrollmentStatus = :status WHERE enrollmentId = :enrollmentId")
+    suspend fun updateStudentEnrollmentStatus(enrollmentId: String, status: String)
+
+    @Query("SELECT * FROM student_enrollments WHERE academicYear = :academicYear AND institutionId = :institutionId")
+    fun getEnrollmentsForAcademicYear(academicYear: String, institutionId: String): Flow<List<StudentEnrollmentEntity>>
+
+    // =========================================================================
+    // 44. ZERO-TRUST PAYMENT ORDERS (FEES & SAAS SUBSCRIPTION BILLING)
+    // =========================================================================
+    @Query("SELECT * FROM payment_orders WHERE orderId = :orderId LIMIT 1")
+    suspend fun getPaymentOrderById(orderId: String): PaymentOrderEntity?
+
+    @Query("SELECT * FROM payment_orders WHERE invoiceId = :invoiceId LIMIT 1")
+    suspend fun getPaymentOrderByInvoiceId(invoiceId: String): PaymentOrderEntity?
+
+    @Query("SELECT * FROM payment_orders WHERE idempotencyKey = :key LIMIT 1")
+    suspend fun getPaymentOrderByIdempotencyKey(key: String): PaymentOrderEntity?
+
+    @Query("SELECT * FROM payment_orders WHERE institutionId = :institutionId ORDER BY createdAt DESC")
+    fun getPaymentOrders(institutionId: String): Flow<List<PaymentOrderEntity>>
+
+    @Query("SELECT * FROM payment_orders WHERE institutionId = :institutionId AND orderType = :orderType ORDER BY createdAt DESC")
+    fun getPaymentOrdersByType(institutionId: String, orderType: String): Flow<List<PaymentOrderEntity>>
+
+    @Query("SELECT * FROM payment_orders WHERE institutionId = :institutionId AND payerUserId = :payerUserId ORDER BY createdAt DESC")
+    fun getPaymentOrdersForPayer(institutionId: String, payerUserId: String): Flow<List<PaymentOrderEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPaymentOrder(order: PaymentOrderEntity)
+
+    @Query("UPDATE payment_orders SET status = :status, completedAt = :completedAt, failureReason = :failureReason, gatewayPaymentId = :gatewayPaymentId WHERE orderId = :orderId")
+    suspend fun updatePaymentOrderStatus(orderId: String, status: String, completedAt: Long?, failureReason: String?, gatewayPaymentId: String?)
+
+    // =========================================================================
+    // 45. DOUBLE-ENTRY FINANCIAL LEDGER
+    // =========================================================================
+    @Query("SELECT * FROM financial_ledger WHERE institutionId = :institutionId AND ledgerDomain = :ledgerDomain ORDER BY timestamp DESC")
+    fun getLedgerEntries(institutionId: String, ledgerDomain: String): Flow<List<FinancialLedgerEntryEntity>>
+
+    @Query("SELECT * FROM financial_ledger WHERE institutionId = :institutionId ORDER BY timestamp DESC")
+    fun getAllLedgerEntries(institutionId: String): Flow<List<FinancialLedgerEntryEntity>>
+
+    @Query("SELECT balanceAfterPaise FROM financial_ledger WHERE institutionId = :institutionId AND accountType = :accountType ORDER BY timestamp DESC LIMIT 1")
+    suspend fun getLatestLedgerBalance(institutionId: String, accountType: String): Long?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertLedgerEntry(entry: FinancialLedgerEntryEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertLedgerEntries(entries: List<FinancialLedgerEntryEntity>)
+
+    // =========================================================================
+    // 46. AUTOMATED MESSAGE DISPATCH LOGS
+    // =========================================================================
+    @Query("SELECT * FROM automated_dispatch_logs WHERE institutionId = :institutionId AND status = 'QUEUED' ORDER BY priority DESC, dispatchId ASC LIMIT :limit")
+    suspend fun getQueuedDispatches(institutionId: String, limit: Int = 50): List<AutomatedMessageDispatchEntity>
+
+    @Query("SELECT * FROM automated_dispatch_logs WHERE institutionId = :institutionId ORDER BY dispatchId DESC")
+    fun getDispatchHistory(institutionId: String): Flow<List<AutomatedMessageDispatchEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertDispatchLog(dispatch: AutomatedMessageDispatchEntity)
+
+    @Query("UPDATE automated_dispatch_logs SET status = :status, dispatchedAt = :dispatchedAt, deliveredAt = :deliveredAt, errorMessage = :errorMessage, attemptCount = :attemptCount WHERE dispatchId = :dispatchId")
+    suspend fun updateDispatchStatus(dispatchId: String, status: String, dispatchedAt: Long?, deliveredAt: Long?, errorMessage: String?, attemptCount: Int)
 }

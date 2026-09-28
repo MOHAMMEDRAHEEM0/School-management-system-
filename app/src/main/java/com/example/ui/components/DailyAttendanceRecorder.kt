@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -34,6 +35,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
@@ -45,6 +47,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -90,6 +93,7 @@ fun DailyAttendanceRecorder(
     val state by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     var searchQuery by remember { mutableStateOf("") }
+    var singleStudentPreviewInfo by remember { mutableStateOf<StudentAttendancePushInfo?>(null) }
 
     val filteredRoster = if (searchQuery.isBlank()) {
         state.roster
@@ -114,7 +118,7 @@ fun DailyAttendanceRecorder(
             onSessionSelected = { viewModel.selectSession(it) }
         )
 
-        // Date Navigator Card
+        // Date Navigator Bar
         DateNavigatorBar(
             state = state,
             onPreviousDay = { viewModel.previousDay() },
@@ -129,7 +133,7 @@ fun DailyAttendanceRecorder(
             lastSavedTimestamp = state.lastSavedTimestamp
         )
 
-        // Quick Batch Operations Ribbon (Mark All Present, Clear, Search)
+        // Quick Batch Operations Ribbon (Mark All Present, Clear, Search, WhatsApp Push)
         BatchOperationsBar(
             searchQuery = searchQuery,
             onSearchChange = { searchQuery = it },
@@ -140,8 +144,65 @@ fun DailyAttendanceRecorder(
             onMarkAllAbsent = {
                 viewModel.markAllAbsent()
                 Toast.makeText(context, "All students set to ABSENT", Toast.LENGTH_SHORT).show()
-            }
+            },
+            onOpenWhatsAppPush = { viewModel.openWhatsAppPushSheet() }
         )
+
+        // Post-Save WhatsApp Push Prompt Banner
+        if (state.showPostSaveWhatsAppPrompt) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("banner_post_save_whatsapp"),
+                shape = RoundedCornerShape(10.dp),
+                color = Color(0xFFF0FDF4),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF25D366))
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.Chat, contentDescription = null, tint = Color(0xFF25D366), modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = "Push WhatsApp Notices to Linked Numbers?",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF15803D)
+                            )
+                            Text(
+                                text = "Computer-generated attendance notices ready for ${state.roster.size} students (${state.summary.presentCount} P, ${state.summary.absentCount} A).",
+                                fontSize = 10.sp,
+                                color = GovSlateMuted
+                            )
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick = { viewModel.dismissPostSaveWhatsAppPrompt() }) {
+                            Text("Later", fontSize = 11.sp, color = GovSlateMuted)
+                        }
+                        Surface(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable { viewModel.openWhatsAppPushSheet() }
+                                .testTag("btn_banner_push_whatsapp"),
+                            color = Color(0xFF25D366)
+                        ) {
+                            Text(
+                                text = "Push Now",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = PureWhite,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
 
         // Feedback Banner (Success / Error)
         state.feedbackMessage?.let { msg ->
@@ -229,13 +290,22 @@ fun DailyAttendanceRecorder(
                     StudentAttendanceCard(
                         item = item,
                         onStatusChange = { newStatus -> viewModel.setStudentStatus(item.studentId, newStatus) },
-                        onRemarksChange = { remarks -> viewModel.setStudentRemarks(item.studentId, remarks) }
+                        onRemarksChange = { remarks -> viewModel.setStudentRemarks(item.studentId, remarks) },
+                        onOpenWhatsAppNotice = {
+                            val pushInfo = AttendanceWhatsAppGenerator.buildPushInfo(
+                                item = item,
+                                className = state.selectedClass,
+                                dateFormatted = state.selectedDate,
+                                currentSession = state.selectedSession
+                            )
+                            singleStudentPreviewInfo = pushInfo
+                        }
                     )
                 }
             }
         }
 
-        // Bottom Fixed / Floating Action: Save to Room DB
+        // Bottom Fixed / Floating Action: Save to Room DB & WhatsApp Push
         SaveAttendanceActionBar(
             state = state,
             onSave = {
@@ -247,6 +317,33 @@ fun DailyAttendanceRecorder(
                         Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                     }
                 }
+            },
+            onOpenWhatsAppPush = { viewModel.openWhatsAppPushSheet() }
+        )
+    }
+
+    // Full Attendance WhatsApp Push Bottom Sheet
+    if (state.showWhatsAppPushSheet) {
+        AttendanceWhatsAppPushSheet(
+            roster = state.roster,
+            selectedClass = state.selectedClass,
+            selectedDate = state.selectedDate,
+            currentSession = state.selectedSession,
+            onDismiss = { viewModel.closeWhatsAppPushSheet() },
+            onAuditDispatch = { count ->
+                viewModel.recordWhatsAppBatchAudit(count)
+            }
+        )
+    }
+
+    // Individual Student WhatsApp Preview Modal
+    singleStudentPreviewInfo?.let { info ->
+        IndividualStudentWhatsAppNoticeDialog(
+            info = info,
+            onDismiss = { singleStudentPreviewInfo = null },
+            onSendWhatsApp = {
+                launchWhatsAppMessage(context, info.linkedMobile, info.generatedMessage)
+                singleStudentPreviewInfo = null
             }
         )
     }
@@ -549,84 +646,127 @@ private fun BatchOperationsBar(
     searchQuery: String,
     onSearchChange: (String) -> Unit,
     onMarkAllPresent: () -> Unit,
-    onMarkAllAbsent: () -> Unit
+    onMarkAllAbsent: () -> Unit,
+    onOpenWhatsAppPush: () -> Unit
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        // Fast Search Input
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = onSearchChange,
-            placeholder = { Text("Search scholar or roll #...", fontSize = 11.5.sp, color = GovSlateMuted) },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = GovSlateMuted, modifier = Modifier.size(16.dp)) },
-            trailingIcon = {
-                if (searchQuery.isNotEmpty()) {
-                    IconButton(onClick = { onSearchChange("") }, modifier = Modifier.size(20.dp)) {
-                        Icon(Icons.Default.Close, contentDescription = "Clear", tint = GovSlateMuted, modifier = Modifier.size(14.dp))
-                    }
-                }
-            },
-            shape = RoundedCornerShape(10.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = GovNavyPrimary,
-                unfocusedBorderColor = Color(0xFFCBD5E1),
-                focusedContainerColor = PureWhite,
-                unfocusedContainerColor = PureWhite
-            ),
-            singleLine = true,
-            modifier = Modifier
-                .weight(1f)
-                .height(48.dp)
-        )
-
-        // Mark All Present
-        Surface(
-            modifier = Modifier
-                .clip(RoundedCornerShape(10.dp))
-                .clickable { onMarkAllPresent() }
-                .testTag("btn_mark_all_present"),
-            color = Color(0xFFDCFCE7),
-            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF86EFAC))
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
+            // Fast Search Input
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = onSearchChange,
+                placeholder = { Text("Search scholar or roll #...", fontSize = 11.5.sp, color = GovSlateMuted) },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = GovSlateMuted, modifier = Modifier.size(16.dp)) },
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { onSearchChange("") }, modifier = Modifier.size(20.dp)) {
+                            Icon(Icons.Default.Close, contentDescription = "Clear", tint = GovSlateMuted, modifier = Modifier.size(14.dp))
+                        }
+                    }
+                },
+                shape = RoundedCornerShape(10.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = GovNavyPrimary,
+                    unfocusedBorderColor = Color(0xFFCBD5E1),
+                    focusedContainerColor = PureWhite,
+                    unfocusedContainerColor = PureWhite
+                ),
+                singleLine = true,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp)
+            )
+
+            // Mark All Present
+            Surface(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { onMarkAllPresent() }
+                    .testTag("btn_mark_all_present"),
+                color = Color(0xFFDCFCE7),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF86EFAC))
             ) {
-                Icon(Icons.Default.DoneAll, contentDescription = null, tint = GovGreen, modifier = Modifier.size(14.dp))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = "All Present",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = GovGreen
-                )
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.DoneAll, contentDescription = null, tint = GovGreen, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "All Present",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = GovGreen
+                    )
+                }
+            }
+
+            // Mark All Absent
+            Surface(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { onMarkAllAbsent() }
+                    .testTag("btn_mark_all_absent"),
+                color = Color(0xFFFEE2E2),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFCA5A5))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Close, contentDescription = null, tint = GovRedAlert, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "All Absent",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = GovRedAlert
+                    )
+                }
             }
         }
 
-        // Mark All Absent
+        // WhatsApp Push Trigger Ribbon
         Surface(
             modifier = Modifier
+                .fillMaxWidth()
                 .clip(RoundedCornerShape(10.dp))
-                .clickable { onMarkAllAbsent() }
-                .testTag("btn_mark_all_absent"),
-            color = Color(0xFFFEE2E2),
-            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFCA5A5))
+                .clickable { onOpenWhatsAppPush() }
+                .testTag("btn_open_whatsapp_push"),
+            color = Color(0xFFF0FDF4),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF86EFAC))
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Icon(Icons.Default.Close, contentDescription = null, tint = GovRedAlert, modifier = Modifier.size(14.dp))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = "All Absent",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = GovRedAlert
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Chat, contentDescription = "WhatsApp", tint = Color(0xFF25D366), modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "WhatsApp Attendance Push to Linked Mobiles",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF15803D)
+                    )
+                }
+                Surface(
+                    color = Color(0xFF25D366),
+                    shape = RoundedCornerShape(6.dp)
+                ) {
+                    Text(
+                        text = "Open Broadcast Console",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = PureWhite,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
             }
         }
     }
@@ -636,7 +776,8 @@ private fun BatchOperationsBar(
 private fun StudentAttendanceCard(
     item: StudentAttendanceItem,
     onStatusChange: (String) -> Unit,
-    onRemarksChange: (String) -> Unit
+    onRemarksChange: (String) -> Unit,
+    onOpenWhatsAppNotice: () -> Unit
 ) {
     var showRemarksInput by remember { mutableStateOf(false) }
 
@@ -744,35 +885,72 @@ private fun StudentAttendanceCard(
                 }
             }
 
-            // Remarks field toggle or preview
+            // Linked Phone & WhatsApp Action Row
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 6.dp),
+                    .padding(top = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                if (item.remarks.isNotBlank() && !showRemarksInput) {
+                // Linked Mobile indicator
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.Phone, contentDescription = null, tint = Color(0xFF15803D), modifier = Modifier.size(11.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = "Note: ${item.remarks}",
+                        text = "Linked: ${item.studentPhone.ifBlank { item.guardianPhone.ifBlank { "9876543210" } }}",
                         fontSize = 10.sp,
-                        color = GovNavyPrimary,
+                        color = Color(0xFF15803D),
                         fontWeight = FontWeight.Medium,
-                        modifier = Modifier.weight(1f)
+                        fontFamily = FontFamily.Monospace
                     )
-                } else if (!showRemarksInput) {
-                    Spacer(modifier = Modifier.weight(1f))
                 }
 
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    // Direct WhatsApp Push trigger for this student
+                    Surface(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable { onOpenWhatsAppNotice() }
+                            .testTag("btn_whatsapp_student_${item.rollNumber}"),
+                        color = Color(0xFFF0FDF4),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF25D366))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Chat, contentDescription = "WhatsApp", tint = Color(0xFF25D366), modifier = Modifier.size(11.dp))
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text(
+                                text = "WhatsApp",
+                                fontSize = 9.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF15803D)
+                            )
+                        }
+                    }
+
+                    Text(
+                        text = if (showRemarksInput) "Done" else if (item.remarks.isNotBlank()) "Edit Note" else "+ Note",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = GovNavyPrimary,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .clickable { showRemarksInput = !showRemarksInput }
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            }
+
+            if (item.remarks.isNotBlank() && !showRemarksInput) {
                 Text(
-                    text = if (showRemarksInput) "Done" else if (item.remarks.isNotBlank()) "Edit Note" else "+ Add Note",
+                    text = "Note: ${item.remarks}",
                     fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
                     color = GovNavyPrimary,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .clickable { showRemarksInput = !showRemarksInput }
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(top = 4.dp)
                 )
             }
 
@@ -831,7 +1009,8 @@ private fun StatusPill(
 @Composable
 private fun SaveAttendanceActionBar(
     state: TeacherAttendanceUiState,
-    onSave: () -> Unit
+    onSave: () -> Unit,
+    onOpenWhatsAppPush: () -> Unit
 ) {
     Surface(
         shape = RoundedCornerShape(14.dp),
@@ -860,19 +1039,44 @@ private fun SaveAttendanceActionBar(
                     )
                 }
 
-                GlassButton(
-                    text = if (state.isSaving) "Saving to Room..." else "Save Attendance",
-                    onClick = onSave,
-                    color = GovGreen,
-                    leadingIcon = {
-                        if (state.isSaving) {
-                            CircularProgressIndicator(color = PureWhite, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                        } else {
-                            Icon(Icons.Default.Save, contentDescription = null, tint = PureWhite, modifier = Modifier.size(16.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onOpenWhatsAppPush() }
+                            .testTag("btn_save_bar_whatsapp_push"),
+                        color = Color(0xFFF0FDF4),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF25D366))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Chat, contentDescription = null, tint = Color(0xFF25D366), modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "WhatsApp Push",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF15803D)
+                            )
                         }
-                    },
-                    modifier = Modifier.testTag("btn_save_attendance")
-                )
+                    }
+
+                    GlassButton(
+                        text = if (state.isSaving) "Saving..." else "Save Attendance",
+                        onClick = onSave,
+                        color = GovGreen,
+                        leadingIcon = {
+                            if (state.isSaving) {
+                                CircularProgressIndicator(color = PureWhite, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(Icons.Default.Save, contentDescription = null, tint = PureWhite, modifier = Modifier.size(16.dp))
+                            }
+                        },
+                        modifier = Modifier.testTag("btn_save_attendance")
+                    )
+                }
             }
         }
     }

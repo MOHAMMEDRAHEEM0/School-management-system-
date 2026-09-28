@@ -1117,10 +1117,11 @@ fun DefaultCredentialsTestingPanel(
                     .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                QuickTestPill("👑 Principal", "3477", "principal", "Password@123", onDirectLogin, onAutoFill)
+                QuickTestPill("👑 Admin", "3477", "admin", "Password@123", onDirectLogin, onAutoFill)
+                QuickTestPill("👩‍🏫 Teacher", "3477", "teacher", "Password@123", onDirectLogin, onAutoFill)
+                QuickTestPill("🎒 Student", "3477", "student", "Password@123", onDirectLogin, onAutoFill)
+                QuickTestPill("🏛️ Principal", "3477", "principal", "Password@123", onDirectLogin, onAutoFill)
                 QuickTestPill("📋 In-Charge", "3477", "incharge_10a", "Password@123", onDirectLogin, onAutoFill)
-                QuickTestPill("👩‍🏫 Teacher", "3477", "faculty_meenakshi", "Password@123", onDirectLogin, onAutoFill)
-                QuickTestPill("🎒 Student", "3477", "aarav_sharma", "Password@123", onDirectLogin, onAutoFill)
                 QuickTestPill("👨‍👩‍👧 Parent", "3477", "vikram_sharma", "Password@123", onDirectLogin, onAutoFill)
                 QuickTestPill("💼 Accountant", "3477", "accountant_mehta", "Password@123", onDirectLogin, onAutoFill)
             }
