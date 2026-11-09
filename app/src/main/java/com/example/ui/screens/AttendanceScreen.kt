@@ -57,6 +57,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import com.example.core.FeatureAvailability
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -64,6 +65,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.local.entities.StudentEntity
 import com.example.data.model.UserRole
+import com.example.ui.components.AttendanceFeeSyncWorkManagerCard
 import com.example.ui.components.AttendanceWhatsAppGenerator
 import com.example.ui.components.AttendanceWhatsAppPushSheet
 import com.example.ui.components.DailyAttendanceRecorder
@@ -253,8 +255,8 @@ fun AttendanceScreen(
                         modifier = Modifier.weight(1f)
                     )
                     QuickKpiCard(
-                        title = "WhatsApp Push",
-                        value = if (attendanceUiState.isAlreadyRecorded) "Recorded" else "Ready",
+                        title = "Outbox Status",
+                        value = if (attendanceUiState.isAlreadyRecorded) "Committed" else "Pending",
                         color = GovNavyPrimary,
                         modifier = Modifier.weight(1f)
                     )
@@ -277,12 +279,14 @@ fun AttendanceScreen(
                 text = { Text("Daily Roll Call", fontSize = 12.sp, fontWeight = FontWeight.Bold) },
                 modifier = Modifier.testTag("tab_attendance_roll_call")
             )
-            Tab(
-                selected = selectedTab == 1,
-                onClick = { selectedTab = 1 },
-                text = { Text("WhatsApp Alerts", fontSize = 12.sp, fontWeight = FontWeight.Bold) },
-                modifier = Modifier.testTag("tab_attendance_whatsapp")
-            )
+            if (FeatureAvailability.isWhatsAppEnabled) {
+                Tab(
+                    selected = selectedTab == 1,
+                    onClick = { selectedTab = 1 },
+                    text = { Text("WhatsApp Alerts", fontSize = 12.sp, fontWeight = FontWeight.Bold) },
+                    modifier = Modifier.testTag("tab_attendance_whatsapp")
+                )
+            }
             Tab(
                 selected = selectedTab == 2,
                 onClick = { selectedTab = 2 },
@@ -523,6 +527,12 @@ private fun AttendanceRosterOverview(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        item {
+            AttendanceFeeSyncWorkManagerCard(
+                institutionId = "INST-SXA-2026"
+            )
+        }
+
         item {
             GlassCard(
                 modifier = Modifier.fillMaxWidth(),

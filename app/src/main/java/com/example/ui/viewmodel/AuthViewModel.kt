@@ -16,7 +16,7 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 // =============================================================================
-// UI STATE FOR AUTHENTICATION FLOWS
+// UI STATE FOR AUTHENTICATION FLOWS (ZERO-TRUST IDENTITY)
 // =============================================================================
 
 data class AuthUiState(
@@ -29,8 +29,7 @@ data class AuthUiState(
     val identifierInput: String = "",
     val passwordInput: String = "",
     val displayNameInput: String = "",
-    val isPasswordVisible: Boolean = false,
-    val selectedRole: UserRole = UserRole.TEACHER
+    val isPasswordVisible: Boolean = false
 )
 
 // =============================================================================
@@ -47,6 +46,13 @@ class AuthViewModel @Inject constructor(
 
     init {
         observeRepositoryAuthState()
+        restoreSessionOnLaunch()
+    }
+
+    private fun restoreSessionOnLaunch() {
+        viewModelScope.launch {
+            authRepository.restoreSessionIfValid()
+        }
     }
 
     private fun observeRepositoryAuthState() {
@@ -63,7 +69,7 @@ class AuthViewModel @Inject constructor(
                                 isAuthenticated = true,
                                 userSession = state.session,
                                 errorMessage = null,
-                                successMessage = "Authenticated as ${state.session.displayName}"
+                                successMessage = "Authenticated as ${state.session.displayName} (${state.session.role.label})"
                             )
                         }
                     }
@@ -107,10 +113,6 @@ class AuthViewModel @Inject constructor(
         _uiState.update { it.copy(institutionId = value.trim(), errorMessage = null) }
     }
 
-    fun setSelectedRole(role: UserRole) {
-        _uiState.update { it.copy(selectedRole = role) }
-    }
-
     fun togglePasswordVisibility() {
         _uiState.update { it.copy(isPasswordVisible = !it.isPasswordVisible) }
     }
@@ -120,7 +122,7 @@ class AuthViewModel @Inject constructor(
     }
 
     /**
-     * Signs in using email/username credentials for current institution tenant.
+     * Signs in using email/username credentials authoritative through Firebase Authentication.
      */
     fun signInWithEmailPassword(
         overrideIdentifier: String? = null,
@@ -161,7 +163,7 @@ class AuthViewModel @Inject constructor(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        errorMessage = error.localizedMessage ?: "Invalid credentials or unauthorized institution."
+                        errorMessage = error.localizedMessage ?: "Invalid Firebase credentials or unauthorized tenant."
                     )
                 }
             }
@@ -169,7 +171,7 @@ class AuthViewModel @Inject constructor(
     }
 
     /**
-     * Signs in using Google ID token via Android Credential Manager.
+     * Signs in using Google ID token via Firebase GoogleAuthProvider.
      */
     fun signInWithGoogleCredential(idToken: String, tenantId: String? = null): Job {
         val tenant = tenantId ?: _uiState.value.institutionId.trim()
@@ -201,19 +203,19 @@ class AuthViewModel @Inject constructor(
     }
 
     /**
-     * Registers a new tenant user with salted hash credential storage.
+     * Registers a new account via Firebase Authentication.
+     * Newly registered accounts strictly receive the safe default STUDENT role.
+     * The role selector has been completely removed to prevent client-side privilege escalation.
      */
     fun registerUser(
         email: String? = null,
         password: String? = null,
         displayName: String? = null,
-        role: UserRole? = null,
         tenantId: String? = null
     ): Job {
         val targetEmail = email ?: _uiState.value.identifierInput.trim()
         val targetPassword = password ?: _uiState.value.passwordInput
         val targetName = displayName ?: _uiState.value.displayNameInput.trim()
-        val targetRole = role ?: _uiState.value.selectedRole
         val targetTenant = tenantId ?: _uiState.value.institutionId.trim()
 
         if (targetEmail.isBlank() || !targetEmail.contains("@")) {
@@ -235,7 +237,7 @@ class AuthViewModel @Inject constructor(
                 email = targetEmail,
                 password = targetPassword,
                 displayName = targetName,
-                role = targetRole,
+                role = UserRole.STUDENT, // Strictly safe default role
                 institutionId = targetTenant
             )
             result.onSuccess { session ->
@@ -245,7 +247,7 @@ class AuthViewModel @Inject constructor(
                         isAuthenticated = true,
                         userSession = session,
                         errorMessage = null,
-                        successMessage = "Account created successfully for ${session.displayName}"
+                        successMessage = "Account created successfully for ${session.displayName} with safe role STUDENT"
                     )
                 }
             }.onFailure { error ->
@@ -260,7 +262,7 @@ class AuthViewModel @Inject constructor(
     }
 
     /**
-     * Dispatches password recovery email.
+     * Dispatches password recovery email via Firebase Authentication.
      */
     fun sendPasswordReset(email: String? = null): Job {
         val targetEmail = email ?: _uiState.value.identifierInput.trim()
@@ -291,7 +293,7 @@ class AuthViewModel @Inject constructor(
     }
 
     /**
-     * Safely signs out the current session and clears security context.
+     * Safely signs out the current Firebase session and clears all security contexts.
      */
     fun signOut(): Job {
         return viewModelScope.launch {

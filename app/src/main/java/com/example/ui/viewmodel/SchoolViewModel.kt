@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.data.local.SchoolPreferencesManager
 import com.example.data.local.entities.AcademicClassEntity
 import com.example.data.local.entities.AdmissionApplicationEntity
 import com.example.data.local.entities.AiAuditLogEntity
@@ -44,6 +45,8 @@ import com.example.data.model.SchoolPermissions
 import com.example.data.model.SecurityClaims
 import com.example.data.model.UserRole
 import com.example.data.model.getDefaultPermissionsForRole
+import com.example.data.remote.sync.CloudSyncManager
+import com.example.data.remote.sync.DurableOutboxManager
 import com.example.data.repository.AiAcademicAssistant
 import com.example.data.repository.AttendanceRepository
 import com.example.data.repository.AuthRepository
@@ -67,6 +70,7 @@ class SchoolViewModel @Inject constructor(
     val userRepository: UserRepository,
     val attendanceRepository: AttendanceRepository,
     val authRepository: AuthRepository,
+    val preferencesManager: SchoolPreferencesManager? = null,
     @ApplicationContext private val context: Context? = null
 ) : ViewModel() {
 
@@ -80,8 +84,15 @@ class SchoolViewModel @Inject constructor(
         userRepository = userRepository,
         attendanceRepository = attendanceRepository,
         authRepository = AuthRepositoryImpl(repository.dao),
+        preferencesManager = context?.let { SchoolPreferencesManager(it) },
         context = context
     )
+
+    val prefsManager: SchoolPreferencesManager by lazy {
+        preferencesManager
+            ?: context?.let { SchoolPreferencesManager(it) }
+            ?: SchoolPreferencesManager(context ?: throw IllegalStateException("Context required for preferences"))
+    }
 
     private val prefs: SharedPreferences? by lazy {
         context?.getSharedPreferences("sxa_school_prefs", Context.MODE_PRIVATE)
@@ -274,6 +285,9 @@ class SchoolViewModel @Inject constructor(
         immutableAuditService.startPeriodicSync(viewModelScope, intervalMillis = 60_000L)
 
         viewModelScope.launch {
+            val isVerified = runCatching { prefsManager.isSchoolVerifiedOnce() }.getOrDefault(false)
+            val isSetupCompleted = runCatching { prefsManager.isSetupCompletedOnce() }.getOrDefault(false)
+
             // Load verified default institution
             val defaultInst = repository.getInstitution()
             if (defaultInst != null) {
@@ -284,40 +298,51 @@ class SchoolViewModel @Inject constructor(
                 }
             }
 
-            // Restore previous authenticated session if valid and not expired
-            val isValidSession = prefs?.getBoolean("auth_session_valid", false) ?: false
-            val sessionExpiry = prefs?.getLong("auth_session_expiry", 0L) ?: 0L
-            val isNotExpired = sessionExpiry > System.currentTimeMillis()
-
-            val savedUserId = prefs?.getString("auth_session_user_id", null)
-            val savedRoleStr = prefs?.getString("auth_session_role", null)
-            val savedRole = savedRoleStr?.let {
-                try { UserRole.valueOf(it) } catch (e: Exception) { null }
-            }
-
-            if (isValidSession && isNotExpired && savedUserId != null && savedRole != null) {
-                val restoredClaims = SecurityClaims(
-                    userId = savedUserId,
-                    role = savedRole,
-                    roleClaim = savedRole.roleClaim,
-                    displayName = prefs?.getString("auth_session_name", "") ?: "",
-                    phone = prefs?.getString("auth_session_phone", "") ?: "",
-                    email = prefs?.getString("auth_session_email", "") ?: "",
-                    designationOrGrade = prefs?.getString("auth_session_desig", "") ?: "",
-                    assignedClassSection = prefs?.getString("auth_session_section", null),
-                    permissions = getDefaultPermissionsForRole(savedRole),
-                    sessionToken = prefs?.getString("auth_session_token", "REST-SES") ?: "REST-SES"
+            // Authoritative session restoration via Firebase Authentication
+            val restored = authRepository.restoreSessionIfValid()
+            restored.onSuccess { session ->
+                val authSession = com.example.data.model.AuthSession(
+                    token = session.sessionToken,
+                    user = UserEntity(
+                        id = session.userId,
+                        institutionId = session.institutionId,
+                        username = session.email.substringBefore("@"),
+                        email = session.email,
+                        displayName = session.displayName,
+                        role = session.role.name,
+                        password = "",
+                        passwordSalt = "",
+                        passwordHash = ""
+                    ),
+                    role = session.role,
+                    institution = _verifiedInstitution.value ?: defaultInst ?: InstitutionEntity(
+                        institutionId = session.institutionId,
+                        registrationCode = "3477",
+                        name = "St. Xavier's International Academy"
+                    ),
+                    academicBatch = _selectedAcademicBatch.value
                 )
-                _userClaims.value = restoredClaims
-                _currentRole.value = savedRole
-                _userProfileName.value = restoredClaims.displayName
+                _currentAuthSession.value = authSession
+                _currentRole.value = session.role
+                _userProfileName.value = session.displayName
+                _userClaims.value = session.claims
                 _isAuthenticated.value = true
                 _authStage.value = AuthStage.AUTHENTICATED
-            } else {
-                // Not authenticated: prompt user through multi-stage secure portal
+                TenantSecurityContext.setContext(session.claims, session.institutionId)
+            }.onFailure {
+                // Fail closed: No valid active session. Require explicit user login.
                 _isAuthenticated.value = false
                 _userClaims.value = null
-                _authStage.value = AuthStage.REGISTRATION_LOOKUP
+                _currentAuthSession.value = null
+                _currentRole.value = UserRole.STUDENT
+
+                // If school was previously verified on this device, proceed directly to credentials login.
+                // Otherwise prompt for school registration lookup.
+                if (isSetupCompleted || isVerified || defaultInst != null) {
+                    _authStage.value = AuthStage.CREDENTIALS_LOGIN
+                } else {
+                    _authStage.value = AuthStage.REGISTRATION_LOOKUP
+                }
             }
 
             val savedTeacherPhone = prefs?.getString("saved_teacher_phone", null)
@@ -361,6 +386,11 @@ class SchoolViewModel @Inject constructor(
                 if (batches.isNotEmpty()) {
                     _selectedAcademicBatch.value = batches.first()
                 }
+                // Persist school verification strictly once in DataStore
+                runCatching {
+                    prefsManager.setSchoolVerified(true, cleanCode, inst.institutionId)
+                    prefsManager.setSetupCompleted(true)
+                }
                 _authStage.value = AuthStage.CREDENTIALS_LOGIN
                 onResult(true, "Verified: ${inst.name}")
             } else {
@@ -399,75 +429,121 @@ class SchoolViewModel @Inject constructor(
             }
 
             val batch = _selectedAcademicBatch.value
-            when (val result = repository.authenticate(inst.institutionId, batch, username, password)) {
-                is com.example.data.model.AuthResult.Success -> {
-                    val session = result.session
-                    _currentAuthSession.value = session
-                    _currentRole.value = session.role
-                    _userProfileName.value = session.user.displayName
-                    _isAuthenticated.value = true
-                    _authStage.value = AuthStage.AUTHENTICATED
+            val result = authRepository.signInWithEmailPassword(username, password, inst.institutionId)
+            result.onSuccess { session ->
+                val authSession = com.example.data.model.AuthSession(
+                    token = session.sessionToken,
+                    user = UserEntity(
+                        id = session.userId,
+                        institutionId = session.institutionId,
+                        username = session.email.substringBefore("@"),
+                        email = session.email,
+                        displayName = session.displayName,
+                        role = session.role.name,
+                        password = "",
+                        passwordSalt = "",
+                        passwordHash = ""
+                    ),
+                    role = session.role,
+                    institution = inst,
+                    academicBatch = batch.ifBlank { inst.currentAcademicYear }
+                )
 
-                    // Configure role permissions and context
-                    val claims = SecurityClaims(
-                        userId = session.user.id,
-                        role = session.role,
-                        roleClaim = session.role.roleClaim,
-                        displayName = session.user.displayName,
-                        phone = session.user.phoneNumber,
-                        email = session.user.email,
-                        designationOrGrade = session.role.clearanceTitle,
-                        assignedClassSection = if (session.role == UserRole.INCHARGE) "10-A" else null,
-                        permissions = getDefaultPermissionsForRole(session.role),
-                        sessionToken = session.token
-                    )
-                    _userClaims.value = claims
-                    TenantSecurityContext.setContext(claims, inst.institutionId)
+                _currentAuthSession.value = authSession
+                _currentRole.value = session.role
+                _userProfileName.value = session.displayName
+                _userClaims.value = session.claims
+                _isAuthenticated.value = true
+                _authStage.value = AuthStage.AUTHENTICATED
+                TenantSecurityContext.setContext(session.claims, inst.institutionId)
 
-                    when (session.role) {
-                        UserRole.ADMIN, UserRole.PRINCIPAL -> _isPrincipalAuthenticated.value = true
-                        UserRole.INCHARGE -> {
-                            _isInchargeAuthenticated.value = true
-                            val staff = repository.getStaffByPhone(session.user.phoneNumber)
-                            if (staff != null) _authenticatedIncharge.value = staff
-                        }
-                        UserRole.TEACHER, UserRole.TEACHING -> {
-                            _isTeacherAuthenticated.value = true
-                            val staff = repository.getStaffByPhone(session.user.phoneNumber)
-                            if (staff != null) _authenticatedTeacher.value = staff
-                        }
-                        UserRole.STUDENT -> {
-                            _isStudentAuthenticated.value = true
-                            val stu = repository.getStudentByAdmissionNumber("ADM-2026-001")
-                            if (stu != null) _authenticatedStudent.value = stu
-                        }
-                        UserRole.PARENT -> {
-                            val stu = repository.getStudentByAdmissionNumber("ADM-2026-001")
-                            if (stu != null) _authenticatedStudent.value = stu
-                        }
-                        else -> {}
+                when (session.role) {
+                    UserRole.ADMIN, UserRole.PRINCIPAL -> _isPrincipalAuthenticated.value = true
+                    UserRole.INCHARGE -> {
+                        _isInchargeAuthenticated.value = true
+                        val staff = repository.getStaffByPhone(session.claims.phone)
+                        if (staff != null) _authenticatedIncharge.value = staff
                     }
-
-                    // Save session to prefs
-                    prefs?.edit()
-                        ?.putBoolean("auth_session_valid", true)
-                        ?.putString("auth_session_token", session.token)
-                        ?.putString("auth_session_user_id", session.user.id)
-                        ?.putString("auth_session_username", session.user.username)
-                        ?.putString("auth_session_role", session.role.name)
-                        ?.putString("auth_session_name", session.user.displayName)
-                        ?.putString("auth_session_phone", session.user.phoneNumber)
-                        ?.putString("auth_session_email", session.user.email)
-                        ?.putString("auth_session_inst_id", inst.institutionId)
-                        ?.putString("auth_session_batch", batch)
-                        ?.putLong("auth_session_expiry", session.expiryTimestamp)
-                        ?.apply()
-
-                    onResult(true, "Authentication successful. Access granted as ${session.role.label}.")
+                    UserRole.TEACHER, UserRole.TEACHING -> {
+                        _isTeacherAuthenticated.value = true
+                        val staff = repository.getStaffByPhone(session.claims.phone)
+                        if (staff != null) _authenticatedTeacher.value = staff
+                    }
+                    UserRole.STUDENT -> {
+                        _isStudentAuthenticated.value = true
+                    }
+                    else -> {}
                 }
-                is com.example.data.model.AuthResult.Error -> {
-                    onResult(false, result.message)
+
+                // Persist session to DataStore
+                runCatching {
+                    prefsManager.saveAuthenticatedSession(
+                        userId = session.userId,
+                        role = session.role.name,
+                        displayName = session.displayName,
+                        token = session.sessionToken
+                    )
                 }
+
+                onResult(true, "Authentication successful. Access granted as ${session.role.label}.")
+            }.onFailure { error ->
+                onResult(false, error.localizedMessage ?: "Firebase Authentication failed.")
+            }
+        }
+    }
+
+    fun registerUser(
+        email: String,
+        password: String,
+        displayName: String,
+        onResult: (Boolean, String) -> Unit
+    ) {
+        viewModelScope.launch {
+            val inst = _verifiedInstitution.value ?: repository.getInstitution()
+            val tenantId = inst?.institutionId ?: "INST-DEFAULT"
+
+            val result = authRepository.registerUser(
+                email = email.trim(),
+                password = password.trim(),
+                displayName = displayName.trim(),
+                role = UserRole.STUDENT,
+                institutionId = tenantId
+            )
+            result.onSuccess { session ->
+                val authSession = com.example.data.model.AuthSession(
+                    token = session.sessionToken,
+                    user = UserEntity(
+                        id = session.userId,
+                        institutionId = session.institutionId,
+                        username = session.email.substringBefore("@"),
+                        email = session.email,
+                        displayName = session.displayName,
+                        role = session.role.name,
+                        password = "",
+                        passwordSalt = "",
+                        passwordHash = ""
+                    ),
+                    role = session.role,
+                    institution = inst ?: InstitutionEntity(
+                        institutionId = session.institutionId,
+                        registrationCode = "3477",
+                        name = "School Academy"
+                    ),
+                    academicBatch = _selectedAcademicBatch.value
+                )
+
+                _currentAuthSession.value = authSession
+                _currentRole.value = session.role
+                _userProfileName.value = session.displayName
+                _userClaims.value = session.claims
+                _isAuthenticated.value = true
+                _authStage.value = AuthStage.AUTHENTICATED
+                _isStudentAuthenticated.value = true
+                TenantSecurityContext.setContext(session.claims, session.institutionId)
+
+                onResult(true, "Account created successfully for ${session.displayName} with safe role STUDENT.")
+            }.onFailure { error ->
+                onResult(false, error.localizedMessage ?: "Registration failed.")
             }
         }
     }
@@ -478,11 +554,12 @@ class SchoolViewModel @Inject constructor(
         onResult: (Boolean, String) -> Unit
     ) {
         viewModelScope.launch {
-            val result = repository.resetUserPassword(usernameOrPhone, newPass)
-            result.fold(
-                onSuccess = { msg -> onResult(true, msg) },
-                onFailure = { err -> onResult(false, err.message ?: "Password reset failed.") }
-            )
+            val result = authRepository.sendPasswordResetEmail(usernameOrPhone)
+            result.onSuccess {
+                onResult(true, "Password reset link sent to $usernameOrPhone")
+            }.onFailure { err ->
+                onResult(false, err.localizedMessage ?: "Password reset failed.")
+            }
         }
     }
 
@@ -499,6 +576,9 @@ class SchoolViewModel @Inject constructor(
                 remarks = "User '${user?.username ?: _userProfileName.value}' logged out of ${inst?.name ?: "Portal"}"
             )
 
+            authRepository.signOut()
+            runCatching { prefsManager.clearSessionOnSignOut() }
+
             _currentAuthSession.value = null
             _userClaims.value = null
             _isAuthenticated.value = false
@@ -506,16 +586,17 @@ class SchoolViewModel @Inject constructor(
             _isTeacherAuthenticated.value = false
             _isInchargeAuthenticated.value = false
             _isStudentAuthenticated.value = false
-            _authStage.value = AuthStage.REGISTRATION_LOOKUP
+            _authStage.value = AuthStage.CREDENTIALS_LOGIN
 
-            prefs?.edit()
-                ?.remove("auth_session_valid")
-                ?.remove("auth_session_token")
-                ?.remove("auth_session_user_id")
-                ?.remove("auth_session_role")
-                ?.remove("auth_session_name")
-                ?.remove("auth_session_expiry")
-                ?.apply()
+            prefs?.edit()?.clear()?.apply()
+        }
+    }
+
+    fun resetAllOnboardingAndSignOut() {
+        viewModelScope.launch {
+            runCatching { prefsManager.resetAllOnboarding() }
+            logout()
+            _authStage.value = AuthStage.REGISTRATION_LOOKUP
         }
     }
 
@@ -722,8 +803,13 @@ class SchoolViewModel @Inject constructor(
         return Pair(true, "Staff verified. Access granted to ${role.clearanceTitle}.")
     }
 
-    // Role switching for Developer / Sandbox Testing Mode
+    // Role switching for Developer / Sandbox Testing Mode (Authorized for Admins only)
     fun switchRole(role: UserRole) {
+        val authoritativeRole = _userClaims.value?.role ?: _currentAuthSession.value?.role ?: UserRole.STUDENT
+        // Privilege escalation guard: Only verified administrators or principals may switch role views
+        if (authoritativeRole != UserRole.ADMIN && authoritativeRole != UserRole.PRINCIPAL) {
+            return
+        }
         _currentRole.value = role
         prefs?.edit()?.putString("sxa_current_role", role.name)?.apply()
         updateProfileNameForRole(role)
@@ -871,23 +957,40 @@ class SchoolViewModel @Inject constructor(
     }
 
     // =========================================================================
-    // SYNCHRONIZATION ENGINE & NETWORK SIMULATION
+    // SYNCHRONIZATION ENGINE & FIRESTORE CLOUD INTEGRATION
     // =========================================================================
 
-    fun triggerSyncNow() {
+    val cloudSyncManager: CloudSyncManager by lazy {
+        val outbox = DurableOutboxManager(repository.dao)
+        CloudSyncManager(repository.dao, outbox)
+    }
+
+    val cloudSyncMessage: StateFlow<String> by lazy { cloudSyncManager.syncMessage }
+
+    fun triggerSyncNow(onComplete: ((Boolean, String) -> Unit)? = null) {
         viewModelScope.launch {
             _isSyncing.value = true
-            delay(1200) // Realistic incremental sync simulation
+            val instId = _verifiedInstitution.value?.institutionId ?: "INST-SXA-2026"
+            val result = cloudSyncManager.syncAll(instId)
             _isSyncing.value = false
-            _lastSyncTime.value = "Just now"
-            logAuditEvent(
-                action = "INCREMENTAL_SYNC_COMPLETED",
-                entityType = "SYNC_ENGINE",
-                entityId = "SYNC-${System.currentTimeMillis() % 10000}",
-                previousState = "PENDING_CHANGES",
-                newState = "SYNCHRONIZED",
-                remarks = "Incremental delta synchronized with central academy server."
-            )
+            val timeStr = java.text.SimpleDateFormat("hh:mm a", java.util.Locale.getDefault()).format(java.util.Date())
+            _lastSyncTime.value = "Just now ($timeStr)"
+
+            result.onSuccess { count ->
+                val msg = cloudSyncManager.syncMessage.value
+                logAuditEvent(
+                    action = "CLOUD_SYNC_COMPLETED",
+                    entityType = "SYNC_ENGINE",
+                    entityId = "SYNC-${System.currentTimeMillis() % 10000}",
+                    previousState = "PENDING_CHANGES",
+                    newState = "SYNCHRONIZED",
+                    remarks = "Sync completed for $instId: $msg ($count items processed)"
+                )
+                onComplete?.invoke(true, msg)
+            }.onFailure { err ->
+                val errMsg = err.localizedMessage ?: "Sync deferred"
+                onComplete?.invoke(false, errMsg)
+            }
         }
     }
 

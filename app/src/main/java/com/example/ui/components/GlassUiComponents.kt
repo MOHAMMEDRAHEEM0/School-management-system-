@@ -7,6 +7,7 @@ import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -115,7 +116,7 @@ fun GlassCard(
     Surface(
         modifier = modifier
             .then(tagModifier)
-            .shadow(elevation = 2.dp, shape = shape, spotColor = Color(0x1A000000))
+            .shadow(elevation = 2.dp, shape = shape, spotColor = Color(0x0F0F172A))
             .clip(shape)
             .border(borderWidth, borderColor, shape)
             .then(clickModifier),
@@ -127,30 +128,39 @@ fun GlassCard(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(headerRibbonColor)
+                        .background(headerRibbonColor.copy(alpha = 0.09f))
                         .padding(horizontal = 14.dp, vertical = 7.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = headerTitle.uppercase(),
-                        color = PureWhite,
-                        fontSize = 10.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp
-                    )
-                    if (headerBadge != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(PureWhite.copy(alpha = 0.2f))
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(headerRibbonColor)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = headerTitle.uppercase(),
+                            color = headerRibbonColor,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.5.sp
+                        )
+                    }
+                    if (headerBadge != null) {
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = headerRibbonColor.copy(alpha = 0.16f),
+                            border = BorderStroke(0.6.dp, headerRibbonColor.copy(alpha = 0.35f))
                         ) {
                             Text(
                                 text = headerBadge,
-                                color = PureWhite,
-                                fontSize = 9.5.sp,
-                                fontWeight = FontWeight.ExtraBold
+                                color = headerRibbonColor,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
                         }
                     }
@@ -396,94 +406,103 @@ fun GlassTopEmblemBanner(
     isOnline: Boolean = true,
     pendingSyncCount: Int = 0
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(GovNavyDark)
-            .padding(horizontal = 14.dp, vertical = 8.dp)
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = Color(0xFFFFFFFF).copy(alpha = 0.94f),
+        border = BorderStroke(1.dp, Color(0xFFE2E8F0).copy(alpha = 0.8f)),
+        shadowElevation = 2.dp
     ) {
-        // Prestige Tricolor Micro Accent Ribbon
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(3.dp)
-                .clip(RoundedCornerShape(2.dp))
+                .padding(horizontal = 14.dp, vertical = 8.dp)
         ) {
-            Box(modifier = Modifier.weight(1f).fillMaxWidth().background(GovSaffron))
-            Box(modifier = Modifier.weight(1f).fillMaxWidth().background(PureWhite))
-            Box(modifier = Modifier.weight(1f).fillMaxWidth().background(GovGreen))
-        }
-        Spacer(modifier = Modifier.height(6.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                Box(
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clip(CircleShape)
-                        .background(GovSaffron),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.School,
-                        contentDescription = "Academy Crest",
-                        tint = PureWhite,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                Column {
-                    Text(
-                        text = title,
-                        color = PureWhite,
-                        fontSize = 12.5.sp,
-                        fontWeight = FontWeight.Black,
-                        letterSpacing = 0.5.sp
-                    )
-                    Text(
-                        text = subTitle,
-                        color = GovNavyContainer,
-                        fontSize = 9.5.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Text(
-                        text = regCode,
-                        color = GovSaffronBorder,
-                        fontSize = 8.5.sp,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-
-            // Sync Status Indicator Pill
-            Box(
+            // Prestige Tricolor Micro Accent Ribbon
+            Row(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(PureWhite.copy(alpha = 0.12f))
-                    .border(1.dp, PureWhite.copy(alpha = 0.35f), RoundedCornerShape(6.dp))
-                    .padding(horizontal = 6.dp, vertical = 3.dp)
+                    .fillMaxWidth()
+                    .height(2.5.dp)
+                    .clip(RoundedCornerShape(2.dp))
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = if (!isOnline) Icons.Default.CloudOff
-                        else if (pendingSyncCount > 0) Icons.Default.CloudSync
-                        else Icons.Default.CloudDone,
-                        contentDescription = null,
-                        tint = if (!isOnline) GovRedAlert else if (pendingSyncCount > 0) GovSaffron else Color(0xFF86EFAC),
-                        modifier = Modifier.size(12.dp)
+                Box(modifier = Modifier.weight(1f).fillMaxWidth().background(GovSaffron))
+                Box(modifier = Modifier.weight(1f).fillMaxWidth().background(Color(0xFFCBD5E1)))
+                Box(modifier = Modifier.weight(1f).fillMaxWidth().background(GovGreen))
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(GovNavyPrimary),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.School,
+                            contentDescription = "Academy Crest",
+                            tint = PureWhite,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = title,
+                            color = GovNavyPrimary,
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 0.2.sp
+                        )
+                        Text(
+                            text = subTitle,
+                            color = GovSlateMuted,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = regCode,
+                            color = GovSaffron,
+                            fontSize = 8.5.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                // Sync Status Indicator Pill
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (!isOnline) Color(0xFFFEF2F2) else if (pendingSyncCount > 0) Color(0xFFFFFBEB) else Color(0xFFF0FDF4),
+                    border = BorderStroke(
+                        0.8.dp,
+                        if (!isOnline) Color(0xFFFCA5A5) else if (pendingSyncCount > 0) Color(0xFFFCD34D) else Color(0xFF86EFAC)
                     )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = if (!isOnline) "OFFLINE" else if (pendingSyncCount > 0) "SYNCING ($pendingSyncCount)" else "SYNCED",
-                        color = PureWhite,
-                        fontSize = 8.5.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 0.3.sp
-                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = if (!isOnline) Icons.Default.CloudOff
+                            else if (pendingSyncCount > 0) Icons.Default.CloudSync
+                            else Icons.Default.CloudDone,
+                            contentDescription = null,
+                            tint = if (!isOnline) GovRedAlert else if (pendingSyncCount > 0) Color(0xFFB45309) else GovGreen,
+                            modifier = Modifier.size(11.dp)
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(
+                            text = if (!isOnline) "OFFLINE" else if (pendingSyncCount > 0) "SYNC ($pendingSyncCount)" else "LIVE",
+                            color = if (!isOnline) GovRedAlert else if (pendingSyncCount > 0) Color(0xFFB45309) else GovGreen,
+                            fontSize = 8.5.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
         }

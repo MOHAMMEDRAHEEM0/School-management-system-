@@ -69,9 +69,6 @@ class AuthViewModelTest {
         viewModel.updateInstitutionId("INST-TEST-999")
         assertEquals("INST-TEST-999", viewModel.uiState.value.institutionId)
 
-        viewModel.setSelectedRole(UserRole.PRINCIPAL)
-        assertEquals(UserRole.PRINCIPAL, viewModel.uiState.value.selectedRole)
-
         viewModel.togglePasswordVisibility()
         assertTrue(viewModel.uiState.value.isPasswordVisible)
         viewModel.togglePasswordVisibility()
@@ -132,8 +129,7 @@ class AuthViewModelTest {
         viewModel.registerUser(
             email = "invalid-email",
             password = "123",
-            displayName = "",
-            role = UserRole.TEACHER
+            displayName = ""
         )
         advanceUntilIdle()
         assertNotNull(viewModel.uiState.value.errorMessage)
@@ -142,8 +138,7 @@ class AuthViewModelTest {
         viewModel.registerUser(
             email = "user@school.org",
             password = "123",
-            displayName = "",
-            role = UserRole.TEACHER
+            displayName = ""
         )
         advanceUntilIdle()
         assertNotNull(viewModel.uiState.value.errorMessage)
@@ -151,12 +146,11 @@ class AuthViewModelTest {
     }
 
     @Test
-    fun testRegisterUserSuccess() = runTest(testDispatcher) {
+    fun testRegisterUserSuccess_SafeDefaultStudentRole() = runTest(testDispatcher) {
         viewModel.registerUser(
-            email = "newteacher@sxa.edu",
+            email = "newstudent@sxa.edu",
             password = "SecurePassword@123",
-            displayName = "Professor Mehta",
-            role = UserRole.TEACHER,
+            displayName = "Student Mehta",
             tenantId = "INST-SXA-2026"
         )
         advanceUntilIdle()
@@ -165,7 +159,66 @@ class AuthViewModelTest {
         assertFalse(state.isLoading)
         assertTrue(state.isAuthenticated)
         assertNotNull(state.userSession)
-        assertEquals("Professor Mehta", state.userSession?.displayName)
+        assertEquals("Student Mehta", state.userSession?.displayName)
+        assertEquals(UserRole.STUDENT, state.userSession?.role)
+    }
+
+    @Test
+    fun testRegisterPrivilegeEscalation_Rejected() = runTest(testDispatcher) {
+        // Attempting to register as a privileged role (PRINCIPAL/ADMIN) directly through repository fails closed
+        val principalResult = fakeAuthRepository.registerUser(
+            email = "attacker@sxa.edu",
+            password = "Password123!",
+            displayName = "Attacker",
+            role = UserRole.PRINCIPAL,
+            institutionId = "INST-SXA-2026"
+        )
+        assertTrue(principalResult.isFailure)
+        assertTrue(principalResult.exceptionOrNull() is SecurityException)
+
+        val adminResult = fakeAuthRepository.registerUser(
+            email = "attacker2@sxa.edu",
+            password = "Password123!",
+            displayName = "Attacker Admin",
+            role = UserRole.ADMIN,
+            institutionId = "INST-SXA-2026"
+        )
+        assertTrue(adminResult.isFailure)
+        assertTrue(adminResult.exceptionOrNull() is SecurityException)
+    }
+
+    @Test
+    fun testLoginFailure_FailsClosed() = runTest(testDispatcher) {
+        viewModel.updateIdentifier("unknown@sxa.edu")
+        viewModel.updatePassword("WrongPassword123")
+        viewModel.signInWithEmailPassword()
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertFalse(state.isAuthenticated)
+        assertNull(state.userSession)
+        assertNotNull(state.errorMessage)
+    }
+
+    @Test
+    fun testTokenExpiration_InvalidatesSession() = runTest(testDispatcher) {
+        viewModel.updateIdentifier("teacher@sxa.edu")
+        viewModel.updatePassword("ValidPass123")
+        viewModel.signInWithEmailPassword()
+        advanceUntilIdle()
+        assertTrue(viewModel.uiState.value.isAuthenticated)
+
+        // Simulate expired token in repository
+        val expiredSession = fakeAuthRepository.currentSession.value!!.copy(
+            expiresAt = System.currentTimeMillis() - 1000L
+        )
+        fakeAuthRepository.setSession(expiredSession)
+        assertTrue(expiredSession.isExpired)
+
+        // Session validation fails closed
+        val restoreResult = fakeAuthRepository.restoreSessionIfValid()
+        assertTrue(restoreResult.isFailure)
+        assertNull(fakeAuthRepository.currentSession.value)
     }
 
     @Test
@@ -219,6 +272,11 @@ class FakeAuthRepository : AuthRepository {
     private val _currentSession = MutableStateFlow<UserSession?>(null)
     override val currentSession: StateFlow<UserSession?> = _currentSession.asStateFlow()
 
+    fun setSession(session: UserSession?) {
+        _currentSession.value = session
+        _authState.value = if (session != null) AuthState.Authenticated(session) else AuthState.Unauthenticated
+    }
+
     override suspend fun signInWithEmailPassword(
         identifier: String,
         password: String,
@@ -231,7 +289,7 @@ class FakeAuthRepository : AuthRepository {
                 email = identifier,
                 displayName = "Anita Roy",
                 role = UserRole.TEACHER,
-                sessionToken = "TOKEN-ABC-123",
+                sessionToken = "FIREBASE-TOKEN-ABC-123",
                 claims = SecurityClaims(
                     userId = "USR-001",
                     role = UserRole.TEACHER,
@@ -245,6 +303,7 @@ class FakeAuthRepository : AuthRepository {
             return Result.success(session)
         } else {
             val error = "Invalid credentials for institution: $institutionId"
+            _currentSession.value = null
             _authState.value = AuthState.Error(error)
             return Result.failure(IllegalArgumentException(error))
         }
@@ -260,7 +319,7 @@ class FakeAuthRepository : AuthRepository {
             email = "googleuser@sxa.edu",
             displayName = "Google User",
             role = UserRole.TEACHER,
-            sessionToken = "GOOGLE-TOKEN-123",
+            sessionToken = "GOOGLE-FIREBASE-TOKEN-123",
             claims = SecurityClaims(
                 userId = "USR-GOOGLE-001",
                 role = UserRole.TEACHER,
@@ -282,24 +341,43 @@ class FakeAuthRepository : AuthRepository {
         role: UserRole,
         institutionId: String
     ): Result<UserSession> {
+        // Enforce privilege escalation guard
+        if (role != UserRole.STUDENT) {
+            val error = "Privilege escalation rejected: Registration cannot choose privileged role '${role.name}'. All new registrations strictly receive the safe default STUDENT role."
+            _authState.value = AuthState.Error(error)
+            return Result.failure(SecurityException(error))
+        }
+
         val session = UserSession(
             userId = "USR-NEW-001",
             institutionId = institutionId,
             email = email,
             displayName = displayName,
-            role = role,
-            sessionToken = "TOKEN-NEW-123",
+            role = UserRole.STUDENT,
+            sessionToken = "FIREBASE-TOKEN-NEW-123",
             claims = SecurityClaims(
                 userId = "USR-NEW-001",
-                role = role,
-                roleClaim = role.roleClaim,
+                role = UserRole.STUDENT,
+                roleClaim = UserRole.STUDENT.roleClaim,
                 displayName = displayName,
-                permissions = setOf("VIEW_STUDENTS")
+                permissions = setOf("VIEW_HOMEWORK")
             )
         )
         _currentSession.value = session
         _authState.value = AuthState.Authenticated(session)
         return Result.success(session)
+    }
+
+    override suspend fun restoreSessionIfValid(): Result<UserSession> {
+        val cur = _currentSession.value
+        return if (cur != null && !cur.isExpired) {
+            _authState.value = AuthState.Authenticated(cur)
+            Result.success(cur)
+        } else {
+            _currentSession.value = null
+            _authState.value = AuthState.Unauthenticated
+            Result.failure(IllegalStateException("No valid Firebase session"))
+        }
     }
 
     override suspend fun signOut() {
@@ -311,11 +389,17 @@ class FakeAuthRepository : AuthRepository {
         return Result.success(Unit)
     }
 
-    override fun isSessionValid(): Boolean = _currentSession.value != null
+    override fun isSessionValid(): Boolean {
+        val session = _currentSession.value ?: return false
+        return !session.isExpired
+    }
 
     override suspend fun refreshToken(): Result<UserSession> {
         val cur = _currentSession.value ?: return Result.failure(IllegalStateException("No session"))
-        val refreshed = cur.copy(sessionToken = "REFRESHED-TOKEN-${System.currentTimeMillis()}")
+        val refreshed = cur.copy(
+            sessionToken = "REFRESHED-FIREBASE-TOKEN-${System.currentTimeMillis()}",
+            expiresAt = System.currentTimeMillis() + 3600000L
+        )
         _currentSession.value = refreshed
         return Result.success(refreshed)
     }

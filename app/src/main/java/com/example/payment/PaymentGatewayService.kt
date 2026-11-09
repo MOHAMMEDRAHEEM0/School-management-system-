@@ -47,12 +47,19 @@ class PaymentGatewayService(
     private val doubleEntryJournal = java.util.concurrent.CopyOnWriteArrayList<DoubleEntryRecord>()
 
     init {
-        // Initialize default opening balances for sandbox/dev testing
-        ledgerBalances["INST-SXA-2026:CASH_AT_BANK"] = 150000000L // Rs. 15,00,000 opening bank
-        ledgerBalances["INST-SXA-2026:FEES_RECEIVABLE"] = 500000000L // Rs. 50,00,000 fees receivable
-        ledgerBalances["INST-SXA-2026:ESCROW_CLEARING"] = 0L
-        ledgerBalances["INST-SXA-2026:PLATFORM_REVENUE"] = 0L
-        ledgerBalances["INST-SXA-2026:REFUND_CLEARING"] = 0L
+        // Balances are initialized dynamically per tenant via ensureTenantLedger
+    }
+
+    private fun ensureTenantLedger(tenantId: String) {
+        val cleanTenant = tenantId.ifBlank { "INST-DEFAULT" }
+        val bankKey = "$cleanTenant:CASH_AT_BANK"
+        if (!ledgerBalances.containsKey(bankKey)) {
+            ledgerBalances[bankKey] = 150000000L // Rs. 15,00,000 opening bank
+            ledgerBalances["$cleanTenant:FEES_RECEIVABLE"] = 500000000L // Rs. 50,00,000 fees receivable
+            ledgerBalances["$cleanTenant:ESCROW_CLEARING"] = 0L
+            ledgerBalances["$cleanTenant:PLATFORM_REVENUE"] = 0L
+            ledgerBalances["$cleanTenant:REFUND_CLEARING"] = 0L
+        }
     }
 
     /**

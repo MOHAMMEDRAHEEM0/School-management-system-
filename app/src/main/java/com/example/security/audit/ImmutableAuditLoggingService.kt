@@ -129,7 +129,7 @@ class ImmutableAuditLoggingService(
 
     private var periodicSyncJob: Job? = null
 
-    val pendingSyncCount: Flow<Int> = dao.getPendingSyncCount()
+    val pendingSyncCount: Flow<Int> = dao.getPendingAuditSyncCount()
     val allAuditLogs: Flow<List<AuditLogEntity>> = dao.getAllAuditLogs()
 
     // =========================================================================

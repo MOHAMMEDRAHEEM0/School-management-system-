@@ -37,8 +37,13 @@ import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Verified
+import androidx.compose.material.icons.filled.DirectionsBus
+import androidx.compose.material.icons.filled.MeetingRoom
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -93,6 +98,19 @@ import com.example.payment.PaymentGatewayService
 import com.example.payment.PaymentVerificationRequest
 import com.example.payment.UpiPaymentIntent
 import com.example.ui.components.StudentAttendancePortal
+import com.example.ui.components.DynamicTimetablePeriodTracker
+import com.example.ui.components.QrAndGeofencedAttendanceSystem
+import com.example.ui.components.HomeworkSubmissionPortal
+import com.example.ui.components.AutomatedFeeRemindersAndReceipts
+import com.example.ui.components.GpsTransportRouteTracker
+import com.example.ui.components.DigitalVisitorAndGatePassSystem
+import com.example.ui.components.ParentTeacherMessagingSystem
+import com.example.ui.components.StudentLeaveManagementSystem
+import com.example.ui.components.ExamHallTicketPortal
+import com.example.ui.components.SchoolCircularNoticeBoard
+import com.example.ui.components.GeminiAiCurriculumAssistant
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material.icons.filled.People
 import java.util.UUID
 
 @Composable
@@ -194,7 +212,7 @@ fun StudentDashboard(
             GlassCard(
                 modifier = Modifier
                     .weight(1f)
-                    .clickable { selectedTab = 2 },
+                    .clickable { selectedTab = 5 },
                 headerRibbonColor = GovGreen,
                 headerTitle = "ATTENDANCE"
             ) {
@@ -216,7 +234,7 @@ fun StudentDashboard(
             GlassCard(
                 modifier = Modifier
                     .weight(1f)
-                    .clickable { selectedTab = 3 },
+                    .clickable { selectedTab = 6 },
                 headerRibbonColor = if (isFeePaidSuccessfully || student.feeDue <= 0) GovGreen else GovRedAlert,
                 headerTitle = "COMPOSITE FEE"
             ) {
@@ -320,16 +338,17 @@ fun StudentDashboard(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Segmented Tabs
+        // Segmented Tabs with Smooth Scrolling
         Surface(
-            shape = RoundedCornerShape(8.dp),
+            shape = RoundedCornerShape(10.dp),
             color = PureWhite,
             border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorderLight),
             modifier = Modifier.fillMaxWidth()
         ) {
-            TabRow(
+            ScrollableTabRow(
                 selectedTabIndex = selectedTab,
                 containerColor = PureWhite,
+                edgePadding = 8.dp,
                 indicator = { tabPositions ->
                     TabRowDefaults.Indicator(
                         modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
@@ -341,37 +360,88 @@ fun StudentDashboard(
                 Tab(
                     selected = selectedTab == 0,
                     onClick = { selectedTab = 0 },
-                    text = { Text("Digital ID", fontSize = 10.5.sp, fontWeight = FontWeight.Bold) }
+                    text = { Text("Timetable", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                    modifier = Modifier.testTag("tab_student_timetable")
                 )
                 Tab(
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 },
-                    text = { Text("Report Card", fontSize = 10.5.sp, fontWeight = FontWeight.Bold) }
+                    text = { Text("Homework", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                    modifier = Modifier.testTag("tab_student_homework")
                 )
                 Tab(
                     selected = selectedTab == 2,
                     onClick = { selectedTab = 2 },
-                    text = { Text("Attendance", fontSize = 10.5.sp, fontWeight = FontWeight.Bold) }
+                    text = { Text("Bus Tracker", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                    modifier = Modifier.testTag("tab_student_bus_tracker")
                 )
                 Tab(
                     selected = selectedTab == 3,
                     onClick = { selectedTab = 3 },
-                    text = { Text("Pay Fees", fontSize = 10.5.sp, fontWeight = FontWeight.Bold) }
+                    text = { Text("Gate Pass", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                    modifier = Modifier.testTag("tab_student_gate_pass")
                 )
                 Tab(
                     selected = selectedTab == 4,
                     onClick = { selectedTab = 4 },
-                    text = { Text("Diary & HW", fontSize = 10.5.sp, fontWeight = FontWeight.Bold) }
+                    text = { Text("Teacher Chat", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                    modifier = Modifier.testTag("tab_student_teacher_chat")
                 )
                 Tab(
                     selected = selectedTab == 5,
                     onClick = { selectedTab = 5 },
-                    text = { Text("Certificates", fontSize = 10.5.sp, fontWeight = FontWeight.Bold) }
+                    text = { Text("Attendance & QR", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                    modifier = Modifier.testTag("tab_student_attendance")
                 )
                 Tab(
                     selected = selectedTab == 6,
                     onClick = { selectedTab = 6 },
-                    text = { Text("WhatsApp Alerts", fontSize = 10.5.sp, fontWeight = FontWeight.Bold) }
+                    text = { Text("Fees & Receipts", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                    modifier = Modifier.testTag("tab_student_fees")
+                )
+                Tab(
+                    selected = selectedTab == 7,
+                    onClick = { selectedTab = 7 },
+                    text = { Text("Leave Desk", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                    modifier = Modifier.testTag("tab_student_leave_desk")
+                )
+                Tab(
+                    selected = selectedTab == 8,
+                    onClick = { selectedTab = 8 },
+                    text = { Text("Hall Ticket", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                    modifier = Modifier.testTag("tab_student_hall_ticket")
+                )
+                Tab(
+                    selected = selectedTab == 9,
+                    onClick = { selectedTab = 9 },
+                    text = { Text("Circulars", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                    modifier = Modifier.testTag("tab_student_circulars")
+                )
+                Tab(
+                    selected = selectedTab == 10,
+                    onClick = { selectedTab = 10 },
+                    text = { Text("AI Tutor", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                    modifier = Modifier.testTag("tab_student_ai_tutor")
+                )
+                Tab(
+                    selected = selectedTab == 11,
+                    onClick = { selectedTab = 11 },
+                    text = { Text("Digital ID", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                )
+                Tab(
+                    selected = selectedTab == 12,
+                    onClick = { selectedTab = 12 },
+                    text = { Text("Report Card", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                )
+                Tab(
+                    selected = selectedTab == 13,
+                    onClick = { selectedTab = 13 },
+                    text = { Text("Certificates", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                )
+                Tab(
+                    selected = selectedTab == 14,
+                    onClick = { selectedTab = 14 },
+                    text = { Text("WhatsApp Alerts", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
                 )
             }
         }
@@ -379,167 +449,138 @@ fun StudentDashboard(
         Spacer(modifier = Modifier.height(14.dp))
 
         // =====================================================================
-        // TAB 0: COMPUTERIZED DIGITAL ID CARD
+        // TAB 0: DYNAMIC TIMETABLE & ACTIVE PERIOD TRACKER
         // =====================================================================
         if (selectedTab == 0) {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    text = "Official Computer-Generated Student Identity Card:",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = GovNavyDark
-                )
-
-                // Render the official non-glass printable PVC card
-                OfficialStudentIdCard(
-                    student = student,
-                    schoolName = "ST. XAVIER'S INTERNATIONAL ACADEMY",
-                    academicYear = "2026-2027"
-                )
-            }
+            DynamicTimetablePeriodTracker(
+                classSection = "${student.grade}-${student.section}"
+            )
         }
 
         // =====================================================================
-        // TAB 1: OFFICIAL TERM REPORT CARD
+        // TAB 1: ASSIGNMENTS & HOMEWORK SUBMISSION PORTAL
         // =====================================================================
         if (selectedTab == 1) {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(
-                            text = "Term 1 Summative Assessment Report Card:",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = GovNavyDark
-                        )
-                        Text(
-                            text = "Session: 2026-2027 | Class 10-A",
-                            fontSize = 9.5.sp,
-                            color = GovSlateMuted
-                        )
-                    }
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                HomeworkSubmissionPortal(
+                    studentName = student.name,
+                    studentId = student.admissionNumber
+                )
 
-                    OfficialSealStamp(
-                        title = "ACADEMY",
-                        code = "SEAL-A+",
-                        modifier = Modifier.size(52.dp),
-                        color = GovGreen
-                    )
-                }
-
-                studentExams.forEach { exam ->
-                    GlassCard(
-                        modifier = Modifier.fillMaxWidth(),
-                        headerRibbonColor = GovNavyPrimary,
-                        headerTitle = exam.subject.uppercase(),
-                        headerBadge = "GRADE ${exam.grade}"
+                if (classDiary.isNotEmpty()) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = PureWhite,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorderLight),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = exam.subject,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = GovSlateDark
-                                )
-                                Text(
-                                    text = "Faculty Remarks: ${exam.teacherRemarks}",
-                                    fontSize = 10.sp,
-                                    color = GovSlateText
-                                )
-                            }
-                            Column(horizontalAlignment = Alignment.End) {
-                                Text(
-                                    text = "${exam.marksObtained.toInt()} / ${exam.maxMarks.toInt()}",
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Black,
-                                    color = GovGreen
-                                )
-                                Text(
-                                    text = "${(exam.marksObtained * 100 / exam.maxMarks).toInt()}%",
-                                    fontSize = 9.sp,
-                                    color = GovSlateMuted
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Summary Cumulative Banner
-                val totalMarks = studentExams.sumOf { it.marksObtained.toDouble() }
-                val maxMarks = studentExams.sumOf { it.maxMarks.toDouble() }.coerceAtLeast(1.0)
-                val cumulativePct = (totalMarks * 100 / maxMarks).toInt()
-
-                GlassCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    headerRibbonColor = GovGreen,
-                    headerTitle = "OVERALL SCHOLASTIC PERFORMANCE"
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text(
-                                text = "Cumulative Grade: A+ (Outstanding)",
+                                text = "Daily School Diary & Teacher Notes (Class 10-A):",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = GovSlateDark
+                                color = GovNavyDark
                             )
-                            Text(
-                                text = "Total Score: ${totalMarks.toInt()} / ${maxMarks.toInt()} ($cumulativePct%)",
-                                fontSize = 10.sp,
-                                color = GovSlateMuted
-                            )
-                        }
 
-                        GlassButton(
-                            text = "Download PDF",
-                            onClick = {
-                                Toast.makeText(context, "Generating official sealed Report Card PDF...", Toast.LENGTH_SHORT).show()
-                            },
-                            color = GovNavyPrimary,
-                            leadingIcon = {
-                                Icon(Icons.Default.CloudDownload, contentDescription = null, tint = PureWhite, modifier = Modifier.size(13.dp))
+                            classDiary.forEach { entry ->
+                                GlassCard(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    headerRibbonColor = GovNavyPrimary,
+                                    headerTitle = "${entry.subject.uppercase()} - ${entry.date}",
+                                    headerBadge = "TEACHER POSTED"
+                                ) {
+                                    Column {
+                                        Text(
+                                            text = "Topic: ${entry.topicCovered}",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = GovSlateDark
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = "Homework Assigned: ${entry.homeworkAssigned}",
+                                            fontSize = 11.sp,
+                                            color = GovNavyPrimary
+                                        )
+                                        if (entry.specialInstructions.isNotBlank()) {
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                text = "Special Note: ${entry.specialInstructions}",
+                                                fontSize = 10.sp,
+                                                color = GovSaffron,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Text(
+                                            text = "Teacher: ${entry.teacherName} (In-Charge Verified)",
+                                            fontSize = 9.sp,
+                                            color = GovSlateMuted
+                                        )
+                                    }
+                                }
                             }
-                        )
+                        }
                     }
                 }
             }
         }
 
         // =====================================================================
-        // TAB 2: MULTI-LAYERED SCHOLAR ATTENDANCE PORTAL (STRICT READ-ONLY)
+        // TAB 2: LIVE GPS SCHOOL BUS ROUTE TRACKER
         // =====================================================================
         if (selectedTab == 2) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(650.dp)
-            ) {
+            GpsTransportRouteTracker(
+                studentName = student.name
+            )
+        }
+
+        // =====================================================================
+        // TAB 3: DIGITAL VISITOR & EARLY PICKUP GATE PASS
+        // =====================================================================
+        if (selectedTab == 3) {
+            DigitalVisitorAndGatePassSystem(
+                studentName = student.name,
+                studentId = student.admissionNumber
+            )
+        }
+
+        // =====================================================================
+        // TAB 4: IN-APP PARENT-TEACHER MESSAGING
+        // =====================================================================
+        if (selectedTab == 4) {
+            ParentTeacherMessagingSystem(
+                parentName = if (isParentMode) "Parent of ${student.name}" else "${student.name} (Scholar)",
+                inchargeName = "Mrs. Sunita Kapoor (Class Incharge)"
+            )
+        }
+
+        // =====================================================================
+        // TAB 5: ATTENDANCE & QR GATE SCAN TERMINAL
+        // =====================================================================
+        if (selectedTab == 5) {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                QrAndGeofencedAttendanceSystem()
+
                 StudentAttendancePortal(
                     viewModel = viewModel,
-                    student = student,
-                    modifier = Modifier.fillMaxSize()
+                    student = student
                 )
             }
         }
 
         // =====================================================================
-        // TAB 3: FEE PAYMENT & ZERO-TRUST GATEWAY CHECKOUT
+        // TAB 6: AUTOMATED FEE REMINDERS & PDF RECEIPTS & ONLINE CHECKOUT
         // =====================================================================
-        if (selectedTab == 3) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                // Fee Summary Banner
+        if (selectedTab == 6) {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                AutomatedFeeRemindersAndReceipts(
+                    studentName = student.name,
+                    studentId = student.admissionNumber,
+                    parentPhone = student.guardianPhone.ifBlank { "+91 91234 56780" }
+                )
+
+                // Fee Summary Banner & Interactive Payment Gateway
                 GlassCard(
                     modifier = Modifier.fillMaxWidth(),
                     headerRibbonColor = if (isFeePaidSuccessfully || student.feeDue <= 0) GovGreen else GovRedAlert,
@@ -789,63 +830,186 @@ fun StudentDashboard(
             }
         }
 
+        Spacer(modifier = Modifier.height(14.dp))
+
         // =====================================================================
-        // TAB 4: SCHOOL DIARY & HOMEWORK
+        // TAB 7: LEAVE APPLICATION & ABSENCE EXCUSE MANAGEMENT (VIDYALAYA ERP)
         // =====================================================================
-        if (selectedTab == 4) {
+        if (selectedTab == 7) {
+            StudentLeaveManagementSystem(
+                student = student
+            )
+        }
+
+        // =====================================================================
+        // TAB 8: COMPUTERIZED EXAMINATION HALL TICKET / ADMIT CARD
+        // =====================================================================
+        if (selectedTab == 8) {
+            ExamHallTicketPortal(
+                student = student
+            )
+        }
+
+        // =====================================================================
+        // TAB 9: DIGITAL NOTICE BOARD & E-CIRCULARS WITH READ RECEIPTS
+        // =====================================================================
+        if (selectedTab == 9) {
+            SchoolCircularNoticeBoard()
+        }
+
+        // =====================================================================
+        // TAB 10: GEMINI AI CURRICULUM ASSISTANT & DOUBT SOLVER
+        // =====================================================================
+        if (selectedTab == 10) {
+            GeminiAiCurriculumAssistant(
+                studentName = student.name,
+                grade = student.grade
+            )
+        }
+
+        // =====================================================================
+        // TAB 11: COMPUTERIZED DIGITAL ID CARD
+        // =====================================================================
+        if (selectedTab == 11) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = "Daily School Diary & Homework (Class 10-A):",
+                    text = "Official Computer-Generated Student Identity Card:",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     color = GovNavyDark
                 )
 
-                classDiary.forEach { entry ->
+                // Render the official non-glass printable PVC card
+                OfficialStudentIdCard(
+                    student = student,
+                    schoolName = "ST. XAVIER'S INTERNATIONAL ACADEMY",
+                    academicYear = "2026-2027"
+                )
+            }
+        }
+
+        // =====================================================================
+        // TAB 12: OFFICIAL TERM REPORT CARD
+        // =====================================================================
+        if (selectedTab == 12) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "Term 1 Summative Assessment Report Card:",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = GovNavyDark
+                        )
+                        Text(
+                            text = "Session: 2026-2027 | Class 10-A",
+                            fontSize = 9.5.sp,
+                            color = GovSlateMuted
+                        )
+                    }
+
+                    OfficialSealStamp(
+                        title = "ACADEMY",
+                        code = "SEAL-A+",
+                        modifier = Modifier.size(52.dp),
+                        color = GovGreen
+                    )
+                }
+
+                studentExams.forEach { exam ->
                     GlassCard(
                         modifier = Modifier.fillMaxWidth(),
                         headerRibbonColor = GovNavyPrimary,
-                        headerTitle = "${entry.subject.uppercase()} - ${entry.date}",
-                        headerBadge = "TEACHER POSTED"
+                        headerTitle = exam.subject.uppercase(),
+                        headerBadge = "GRADE ${exam.grade}"
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = exam.subject,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = GovSlateDark
+                                )
+                                Text(
+                                    text = "Faculty Remarks: ${exam.teacherRemarks}",
+                                    fontSize = 10.sp,
+                                    color = GovSlateText
+                                )
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(
+                                    text = "${exam.marksObtained.toInt()} / ${exam.maxMarks.toInt()}",
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = GovGreen
+                                )
+                                Text(
+                                    text = "${(exam.marksObtained * 100 / exam.maxMarks).toInt()}%",
+                                    fontSize = 9.sp,
+                                    color = GovSlateMuted
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Summary Cumulative Banner
+                val totalMarks = studentExams.sumOf { it.marksObtained.toDouble() }
+                val maxMarks = studentExams.sumOf { it.maxMarks.toDouble() }.coerceAtLeast(1.0)
+                val cumulativePct = (totalMarks * 100 / maxMarks).toInt()
+
+                GlassCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    headerRibbonColor = GovGreen,
+                    headerTitle = "OVERALL SCHOLASTIC PERFORMANCE"
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
                             Text(
-                                text = "Topic: ${entry.topicCovered}",
-                                fontSize = 12.sp,
+                                text = "Cumulative Grade: A+ (Outstanding)",
+                                fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = GovSlateDark
                             )
-                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Homework Assigned: ${entry.homeworkAssigned}",
-                                fontSize = 11.sp,
-                                color = GovNavyPrimary
-                            )
-                            if (entry.specialInstructions.isNotBlank()) {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "Special Note: ${entry.specialInstructions}",
-                                    fontSize = 10.sp,
-                                    color = GovSaffron,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = "Teacher: ${entry.teacherName} (In-Charge Verified)",
-                                fontSize = 9.sp,
+                                text = "Total Score: ${totalMarks.toInt()} / ${maxMarks.toInt()} ($cumulativePct%)",
+                                fontSize = 10.sp,
                                 color = GovSlateMuted
                             )
                         }
+
+                        GlassButton(
+                            text = "Download PDF",
+                            onClick = {
+                                Toast.makeText(context, "Generating official sealed Report Card PDF...", Toast.LENGTH_SHORT).show()
+                            },
+                            color = GovNavyPrimary,
+                            leadingIcon = {
+                                Icon(Icons.Default.CloudDownload, contentDescription = null, tint = PureWhite, modifier = Modifier.size(13.dp))
+                            }
+                        )
                     }
                 }
             }
         }
 
         // =====================================================================
-        // TAB 5: CERTIFICATES & REQUEST DESK
+        // TAB 13: CERTIFICATES & REQUEST DESK
         // =====================================================================
-        if (selectedTab == 5) {
+        if (selectedTab == 13) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -944,9 +1108,9 @@ fun StudentDashboard(
         }
 
         // =====================================================================
-        // TAB 6: WHATSAPP ATTENDANCE PUSH ALERTS & LINKED MOBILE
+        // TAB 14: WHATSAPP ATTENDANCE PUSH ALERTS & LINKED MOBILE
         // =====================================================================
-        if (selectedTab == 6) {
+        if (selectedTab == 14) {
             var simCondition by remember { mutableIntStateOf(0) } // 0: All Present, 1: Partial Absent, 2: Absent Today
             val linkedNumber = student.studentPhone.ifBlank { student.guardianPhone.ifBlank { "+91 98765 43210" } }
             val todayDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())

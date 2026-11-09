@@ -6,11 +6,37 @@ service firebase.storage {
       return request.auth != null && request.auth.uid != null;
     }
 
+    function isAccountActive() {
+      return !('isAccountDisabled' in request.auth.token) || request.auth.token.isAccountDisabled != true;
+    }
+
     function isTenantMember(institutionId) {
-      return isAuthenticated() && (
-        request.auth.token.tenantId == institutionId ||
-        request.auth.token.isSuperAdmin == true
+      return isAuthenticated() && isAccountActive() && (
+        (('tenantId' in request.auth.token) && request.auth.token.tenantId == institutionId) ||
+        (('isSuperAdmin' in request.auth.token) && request.auth.token.isSuperAdmin == true)
       );
+    }
+
+    function hasRole(role) {
+      return isAuthenticated() && isAccountActive() && (
+        request.auth.token.role == role ||
+        request.auth.token.role == 'ROLE_' + role
+      );
+    }
+
+    function hasAnyRole(roles) {
+      return isAuthenticated() && isAccountActive() && (
+        request.auth.token.role in roles ||
+        (('isSuperAdmin' in request.auth.token) && request.auth.token.isSuperAdmin == true)
+      );
+    }
+
+    // Safe parent check: guards against missing or non-list wardStudentIds
+    function isParentOf(studentId) {
+      return isAuthenticated() && isAccountActive() &&
+        ('wardStudentIds' in request.auth.token) &&
+        (request.auth.token.wardStudentIds is list) &&
+        request.auth.token.wardStudentIds.hasAny([studentId]);
     }
 
     function isValidImage() {
@@ -19,7 +45,7 @@ service firebase.storage {
     }
 
     function isValidDocument() {
-      return request.resource.contentType.matches('(application/pdf|image/(jpeg|png))') &&
+      return request.resource.contentType.matches('(application/pdf|image/(jpeg|png|webp))') &&
              request.resource.size < 15 * 1024 * 1024; // 15 MB max
     }
 
@@ -31,7 +57,7 @@ service firebase.storage {
         allow read: if isTenantMember(institutionId);
         allow write: if isTenantMember(institutionId) && isValidImage() && (
           request.auth.uid == userId ||
-          request.auth.token.role in ['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'STAFF_MANAGER']
+          hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'STAFF_MANAGER', 'ROLE_STAFF_MANAGER'])
         );
       }
 
@@ -39,32 +65,41 @@ service firebase.storage {
       match /certificates/{studentId}/{fileName} {
         allow read: if isTenantMember(institutionId) && (
           request.auth.uid == studentId ||
-          request.auth.token.wardStudentIds.hasAny([studentId]) ||
-          request.auth.token.role in ['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'OFFICE']
+          isParentOf(studentId) ||
+          hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'OFFICE', 'ROLE_OFFICE'])
         );
         allow write: if isTenantMember(institutionId) && isValidDocument() &&
-          request.auth.token.role in ['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'OFFICE'];
+          hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'OFFICE', 'ROLE_OFFICE']);
       }
 
       // Homework and Assignment Attachments
       match /homework/{homeworkId}/{fileName} {
         allow read: if isTenantMember(institutionId);
         allow write: if isTenantMember(institutionId) && isValidDocument() &&
-          request.auth.token.role in ['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'TEACHER', 'ROLE_TEACHER'];
+          hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'TEACHER', 'ROLE_TEACHER']);
       }
 
-      // Homework Student Submissions
+      // Homework Student Submissions Attachments
       match /submissions/{homeworkId}/{studentId}/{fileName} {
         allow read: if isTenantMember(institutionId) && (
           request.auth.uid == studentId ||
-          request.auth.token.role in ['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'TEACHER', 'ROLE_TEACHER']
+          isParentOf(studentId) ||
+          hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'TEACHER', 'ROLE_TEACHER'])
         );
         allow write: if isTenantMember(institutionId) && isValidDocument() &&
           request.auth.uid == studentId;
       }
+
+      // Payment Receipts & Audit Archives (Restricted Financial Area)
+      match /financial_receipts/{transactionId}/{fileName} {
+        allow read: if isTenantMember(institutionId) &&
+          hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'ACCOUNTANT', 'ROLE_ACCOUNTANT']);
+        allow write: if isTenantMember(institutionId) && isValidDocument() &&
+          hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'ACCOUNTANT', 'ROLE_ACCOUNTANT']);
+      }
     }
 
-    // Deny all other paths
+    // Strict default deny for all other paths
     match /{allPaths=**} {
       allow read, write: if false;
     }

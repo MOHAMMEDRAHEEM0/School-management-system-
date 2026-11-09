@@ -2,6 +2,8 @@ package com.example.di
 
 import com.example.data.repository.AttendanceRepository
 import com.example.data.repository.AttendanceRepositoryImpl
+import com.example.data.repository.AuditLoggerRepository
+import com.example.data.repository.AuditLoggerRepositoryImpl
 import com.example.data.repository.AuthRepository
 import com.example.data.repository.AuthRepositoryImpl
 import com.example.data.repository.UserRepository
@@ -27,4 +29,8 @@ abstract class RepositoryModule {
     @Binds
     @Singleton
     abstract fun bindUserRepository(impl: UserRepositoryImpl): UserRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindAuditLoggerRepository(impl: AuditLoggerRepositoryImpl): AuditLoggerRepository
 }

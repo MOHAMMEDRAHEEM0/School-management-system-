@@ -54,17 +54,19 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.example.BuildConfig
 import com.example.data.local.AppDatabase
 import com.example.data.model.RbacRoleCategory
 import com.example.data.model.SchoolPermissions
 import com.example.data.model.UserRole
 import com.example.data.model.rbacCategory
 import com.example.data.repository.SchoolRepository
+import com.example.ui.components.FrostedGlassInstitutionalTopBar
 import com.example.ui.components.GlassBadge
 import com.example.ui.components.GlassTopEmblemBanner
 import com.example.ui.components.RbacAccessDeniedDialog
+import com.example.ui.components.RbacClearanceIndicatorBar
 import com.example.ui.components.RbacDashboardHost
-import com.example.ui.components.RbacRoleSwitcherBar
 import com.example.ui.navigation.AppBottomNavigationBar
 import com.example.ui.navigation.AppDestinations
 import com.example.ui.navigation.AppNavGraph
@@ -99,8 +101,11 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         val database = AppDatabase.getDatabase(applicationContext)
-        val repository = SchoolRepository(database.schoolDao())
-        val factory = SchoolViewModelFactory(repository, applicationContext)
+        val monitor = com.example.data.remote.sync.NetworkConnectivityMonitor(applicationContext)
+        val outboxManager = com.example.data.remote.sync.DurableOutboxManager(database.schoolDao(), monitor)
+        val attendanceRepo = com.example.data.repository.AttendanceRepositoryImpl(database.schoolDao(), outboxManager)
+        val repository = SchoolRepository(database.schoolDao(), outboxManager, attendanceRepo)
+        val factory = SchoolViewModelFactory(repository, applicationContext, attendanceRepository = attendanceRepo)
 
         setContent {
             MyApplicationTheme {
@@ -157,7 +162,7 @@ fun SchoolManagementApp(viewModel: SchoolViewModel) {
         modifier = Modifier
             .fillMaxSize()
             .testTag("school_management_scaffold"),
-        contentWindowInsets = WindowInsets.statusBars,
+        contentWindowInsets = WindowInsets(0.dp),
         bottomBar = {
             AppBottomNavigationBar(
                 navController = navController,
@@ -166,101 +171,26 @@ fun SchoolManagementApp(viewModel: SchoolViewModel) {
         },
         topBar = {
             Column {
-                // Official Institutional Emblem Top Bar with Real-Time Sync Indicator
-                GlassTopEmblemBanner(
-                    title = verifiedInst?.name ?: "ST. XAVIER'S INTERNATIONAL ACADEMY",
-                    subTitle = "AUTONOMOUS INSTITUTIONAL CLOUD PORTAL",
-                    regCode = "REG NO: ${verifiedInst?.registrationCode ?: "3477"} | BATCH $selectedBatch",
+                FrostedGlassInstitutionalTopBar(
+                    institution = verifiedInst,
+                    profileName = profileName,
+                    currentRole = currentRole,
+                    selectedBatch = selectedBatch,
                     isOnline = isOnline,
-                    pendingSyncCount = pendingSyncCount
+                    pendingSyncCount = pendingSyncCount,
+                    onTriggerSync = { viewModel.triggerSyncNow() },
+                    onLogoutClick = { showLogoutDialog = true }
                 )
 
-                // Active User Session & Role Security Header
-                Surface(
-                    color = Color(0xFFF1F5F9),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorderLight),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // User Profile & Role Clearance Badge
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            GlassBadge(
-                                text = currentRole.roleClaim.replace("ROLE_", ""),
-                                color = when (currentRole) {
-                                    UserRole.ADMIN, UserRole.PRINCIPAL -> GovNavyPrimary
-                                    UserRole.INCHARGE -> GovSaffron
-                                    UserRole.TEACHER, UserRole.TEACHING -> GovGreen
-                                    UserRole.STUDENT -> GovNavyDark
-                                    UserRole.PARENT -> GovSaffron
-                                    else -> Color(0xFFD97706)
-                                }
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Column {
-                                Text(
-                                    text = profileName.take(28),
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = GovSlateDark
-                                )
-                                Text(
-                                    text = "Batch: $selectedBatch • ${verifiedInst?.cityCampus ?: "Campus"}",
-                                    fontSize = 10.sp,
-                                    color = GovSlateMuted
-                                )
-                            }
-                        }
-
-                        // Actions: Sync & Secure Logout
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(
-                                onClick = { viewModel.triggerSyncNow() },
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Refresh,
-                                    contentDescription = "Sync",
-                                    tint = GovNavyPrimary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.width(4.dp))
-
-                            IconButton(
-                                onClick = { showLogoutDialog = true },
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Logout,
-                                    contentDescription = "Secure Logout",
-                                    tint = GovRedAlert,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // RBAC Role Navigation Switcher Bar (Admin | Teacher | Student)
+                // Production Security: RBAC Clearance Indicator Bar is completely REMOVED for non-admin users.
+                // Students, Teachers, and Parents see ZERO clearance level cards.
+                // Only administrators in DEBUG mode can see the clearance header.
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
                 val currentRoute = navBackStackEntry?.destination?.route
-                if (currentRoute == null || currentRoute == AppDestinations.DASHBOARD) {
-                    RbacRoleSwitcherBar(
+                if (BuildConfig.DEBUG && currentRole.rbacCategory == RbacRoleCategory.ADMIN && (currentRoute == null || currentRoute == AppDestinations.COMMAND || currentRoute == "dashboard")) {
+                    RbacClearanceIndicatorBar(
                         currentRole = currentRole,
-                        userClaims = userClaims,
-                        onSwitchRole = { newRole ->
-                            viewModel.switchRole(newRole)
-                        }
+                        userClaims = userClaims
                     )
                 }
             }
@@ -284,20 +214,13 @@ fun SchoolManagementApp(viewModel: SchoolViewModel) {
         }
     }
 
-    // RBAC 403 Forbidden Access Denied Dialog
+    // RBAC 403 Forbidden Access Denied Dialog (Strictly locked to authenticated clearance)
     accessDeniedInfo?.let { (resource, required) ->
         RbacAccessDeniedDialog(
             requiredRole = required,
             currentRole = currentRole,
             resourceName = resource,
-            onDismiss = { accessDeniedInfo = null },
-            onSwitchToAuthorizedRole = {
-                if (required.contains("ADMIN")) {
-                    viewModel.switchRole(UserRole.ADMIN)
-                } else if (required.contains("TEACHER")) {
-                    viewModel.switchRole(UserRole.TEACHER)
-                }
-            }
+            onDismiss = { accessDeniedInfo = null }
         )
     }
 

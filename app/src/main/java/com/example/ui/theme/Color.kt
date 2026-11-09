@@ -44,3 +44,24 @@ val GlassSurfaceDark = Color(0xFF0F172A).copy(alpha = 0.88f)
 val GlassBorderLight = Color(0xFFFFFFFF).copy(alpha = 0.80f)
 val GlassBorderSubtle = Color(0xFFCBD5E1).copy(alpha = 0.60f)
 val GlassHighlight = Color(0xFFFFFFFF).copy(alpha = 0.25f)
+
+// =========================================================================
+// MODERN BLUE DESIGN SYSTEM (Unified Production Theme)
+// =========================================================================
+val ModernBlue900 = Color(0xFF0F172A) // Deep Slate Navy
+val ModernBlue800 = Color(0xFF1E3A8A) // Classic Royal Blue
+val ModernBlue700 = Color(0xFF1D4ED8) // Deep Primary Blue
+val ModernBlue600 = Color(0xFF2563EB) // Vibrant Accent Blue
+val ModernBlue500 = Color(0xFF3B82F6) // Bright Electric Blue
+val ModernBlue200 = Color(0xFFBFDBFE) // Soft Sky Border
+val ModernBlue100 = Color(0xFFDBEAFE) // Light Accent Fill
+val ModernBlue50 = Color(0xFFEFF6FF)  // Clean Canvas Tint
+
+val ModernCardBackground = Color(0xFFFFFFFF)
+val ModernCardBorder = Color(0xFFE2E8F0)
+val ModernCardBorderActive = Color(0xFF93C5FD)
+val ModernSurfaceSubtle = Color(0xFFF8FAFC)
+val ModernTextPrimary = Color(0xFF0F172A)
+val ModernTextSecondary = Color(0xFF475569)
+val ModernTextMuted = Color(0xFF64748B)
+

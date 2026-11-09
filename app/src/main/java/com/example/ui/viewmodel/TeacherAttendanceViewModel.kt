@@ -66,6 +66,11 @@ data class TeacherAttendanceUiState(
     val teacherName: String = "Dr. Meenakshi Sundaram",
     val teacherId: String = "FAC-TCH-01",
     val institutionId: String = "INST-SXA-2026",
+    val pendingOutboxCount: Int = 0,
+    val isOnline: Boolean = true,
+    val isSyncingOutbox: Boolean = false,
+    val syncStatusMessage: String = "All pending changes are fully synchronized.",
+    val isReviewMode: Boolean = false,
     val roster: List<StudentAttendanceItem> = emptyList(),
     val summary: AttendanceSummary = AttendanceSummary(),
     val isLoading: Boolean = false,
@@ -83,7 +88,8 @@ data class TeacherAttendanceUiState(
 @HiltViewModel
 class TeacherAttendanceViewModel @Inject constructor(
     private val attendanceRepository: AttendanceRepository,
-    private val schoolRepository: SchoolRepository
+    private val schoolRepository: SchoolRepository,
+    private val outboxManager: com.example.data.remote.sync.DurableOutboxManager? = null
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TeacherAttendanceUiState())
@@ -92,11 +98,74 @@ class TeacherAttendanceViewModel @Inject constructor(
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
     private val displayFormat = SimpleDateFormat("EEE, dd MMM yyyy", Locale.getDefault())
 
+    private val effectiveOutboxManager = outboxManager ?: schoolRepository.outboxManager
+
     init {
+        // Resolve active tenant and authenticated teacher from Security Claims
+        val activeClaims = com.example.security.TenantSecurityContext.getCurrentClaims()
+            ?: com.example.security.SecureSessionManager.getActiveSession()?.claims
+        val activeTenant = com.example.security.TenantSecurityContext.getActiveTenantIdOrNull()
+            ?: com.example.security.SecureSessionManager.getActiveSession()?.institutionId
+            ?: "INST-SXA-2026"
+
+        val tName = activeClaims?.displayName ?: "Faculty Member"
+        val tId = activeClaims?.userId ?: "FAC-TCH-01"
+
+        _uiState.update {
+            it.copy(
+                institutionId = activeTenant,
+                teacherName = tName,
+                teacherId = tId
+            )
+        }
+
         // Observe students from repository
         viewModelScope.launch {
             schoolRepository.allStudents.collect { studentsList ->
                 loadRosterForCurrentSelection(studentsList)
+            }
+        }
+
+        // Observe pending outbox count for attendance/system mutations
+        viewModelScope.launch {
+            effectiveOutboxManager.getPendingOutboxCount(activeTenant).collect { count ->
+                _uiState.update { it.copy(pendingOutboxCount = count) }
+            }
+        }
+
+        // Observe outbox syncing state
+        viewModelScope.launch {
+            effectiveOutboxManager.isSyncing.collect { syncing ->
+                _uiState.update { it.copy(isSyncingOutbox = syncing) }
+            }
+        }
+
+        // Observe sync status messages
+        viewModelScope.launch {
+            effectiveOutboxManager.syncStatusMessage.collect { statusMsg ->
+                _uiState.update { it.copy(syncStatusMessage = statusMsg) }
+            }
+        }
+    }
+
+    fun setReviewMode(enabled: Boolean) {
+        _uiState.update { it.copy(isReviewMode = enabled) }
+    }
+
+    fun triggerCloudSync(onComplete: ((Boolean, String) -> Unit)? = null) {
+        val activeTenant = _uiState.value.institutionId
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSyncingOutbox = true) }
+            val result = effectiveOutboxManager.flushQueue(activeTenant, forceAll = true)
+            _uiState.update { it.copy(isSyncingOutbox = false) }
+            result.onSuccess { batch ->
+                val msg = "Sync completed: ${batch.acknowledgedCount} acknowledged by server, ${batch.failedCount} pending/retrying."
+                _uiState.update { it.copy(feedbackMessage = msg) }
+                onComplete?.invoke(true, msg)
+            }.onFailure { err ->
+                val errMsg = "Sync deferred: ${err.localizedMessage ?: "Network offline"}"
+                _uiState.update { it.copy(errorMessage = errMsg) }
+                onComplete?.invoke(false, errMsg)
             }
         }
     }
@@ -227,8 +296,42 @@ class TeacherAttendanceViewModel @Inject constructor(
 
     fun saveDailyAttendance(onComplete: (Boolean, String) -> Unit = { _, _ -> }) {
         val currentState = _uiState.value
+
+        // 1. RBAC Permission & Authorization Check
+        val activeClaims = com.example.security.TenantSecurityContext.getCurrentClaims()
+            ?: com.example.security.SecureSessionManager.getActiveSession()?.claims
+
+        val isAuthorized = activeClaims != null && (
+            activeClaims.role in setOf(
+                com.example.data.model.UserRole.ADMIN,
+                com.example.data.model.UserRole.PRINCIPAL,
+                com.example.data.model.UserRole.VICE_PRINCIPAL,
+                com.example.data.model.UserRole.INCHARGE,
+                com.example.data.model.UserRole.TEACHER,
+                com.example.data.model.UserRole.TEACHING
+            ) || activeClaims.hasPermission("MARK_ATTENDANCE_SECTION")
+        )
+
+        if (!isAuthorized) {
+            val errorMsg = "Access Denied: You do not have permission to mark attendance for class ${currentState.selectedClass}."
+            _uiState.update { it.copy(errorMessage = errorMsg) }
+            onComplete(false, errorMsg)
+            return
+        }
+
+        // 2. Class Membership & Roster Validation
         if (currentState.roster.isEmpty()) {
-            val msg = "No students found in class ${currentState.selectedClass} to record."
+            val msg = "No students enrolled in class ${currentState.selectedClass} to record attendance."
+            _uiState.update { it.copy(errorMessage = msg) }
+            onComplete(false, msg)
+            return
+        }
+
+        // 3. Status Validation (Each student must have PRESENT, ABSENT, or LATE)
+        val validStatuses = setOf("PRESENT", "ABSENT", "LATE", "LEAVE")
+        val invalidEntries = currentState.roster.filter { it.status.uppercase() !in validStatuses }
+        if (invalidEntries.isNotEmpty()) {
+            val msg = "Invalid status found for student ${invalidEntries.first().studentName}. Must be Present, Absent, or Late."
             _uiState.update { it.copy(errorMessage = msg) }
             onComplete(false, msg)
             return
@@ -238,6 +341,21 @@ class TeacherAttendanceViewModel @Inject constructor(
 
         viewModelScope.launch {
             try {
+                // 4. Duplicate Check: Prevent duplicate submission on the same date/session if already recorded
+                val existing = attendanceRepository.getAttendanceForClassAndDate(
+                    currentState.selectedClass,
+                    currentState.selectedDate
+                )
+                if (existing.isNotEmpty() && !currentState.isAlreadyRecorded) {
+                    // Update state to reflect existing record to warn teacher
+                    _uiState.update {
+                        it.copy(
+                            isAlreadyRecorded = true,
+                            lastSavedTimestamp = existing.maxOfOrNull { it.dateTimestamp }
+                        )
+                    }
+                }
+
                 val timestamp = System.currentTimeMillis()
                 val attendanceEntities = currentState.roster.map { student ->
                     AttendanceEntity(
@@ -247,7 +365,7 @@ class TeacherAttendanceViewModel @Inject constructor(
                         classSection = currentState.selectedClass,
                         date = currentState.selectedDate,
                         dateTimestamp = timestamp,
-                        status = student.status,
+                        status = student.status.uppercase(),
                         session = currentState.selectedSession,
                         markedByTeacherId = currentState.teacherId,
                         remarks = student.remarks,
@@ -275,7 +393,7 @@ class TeacherAttendanceViewModel @Inject constructor(
                         entityId = "${currentState.selectedClass}_${currentState.selectedDate}",
                         actorUserId = currentState.teacherId,
                         actorName = currentState.teacherName,
-                        actorRole = "TEACHER",
+                        actorRole = activeClaims?.roleClaim ?: "TEACHER",
                         previousState = if (currentState.isAlreadyRecorded) "PREVIOUSLY_RECORDED" else "PENDING",
                         newState = "COMMITTED_ROOM",
                         remarks = "Attendance marked for ${currentState.selectedClass} on ${currentState.selectedDate}: ${currentState.summary.presentCount} P, ${currentState.summary.absentCount} A, ${currentState.summary.lateCount} L (${currentState.summary.attendancePercentage}%)"

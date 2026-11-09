@@ -80,6 +80,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.BuildConfig
 import com.example.data.local.entities.InstitutionEntity
 import com.example.data.model.UserRole
 import com.example.ui.components.LiquidGlassButton
@@ -120,13 +121,13 @@ fun AuthScreen(
     var showForgotPasswordDialog by remember { mutableStateOf(false) }
 
     // Stage 1 Fields
-    var registrationCodeInput by remember { mutableStateOf("3477") }
+    var registrationCodeInput by remember { mutableStateOf(if (BuildConfig.DEBUG) "3477" else "") }
     var isLookupLoading by remember { mutableStateOf(false) }
     var lookupErrorMessage by remember { mutableStateOf<String?>(null) }
 
     // Stage 2 Fields
-    var usernameInput by remember { mutableStateOf("principal") }
-    var passwordInput by remember { mutableStateOf("Password@123") }
+    var usernameInput by remember { mutableStateOf("") }
+    var passwordInput by remember { mutableStateOf("") }
     var isPasswordVisible by remember { mutableStateOf(false) }
     var isLoginLoading by remember { mutableStateOf(false) }
     var loginErrorMessage by remember { mutableStateOf<String?>(null) }
@@ -154,43 +155,6 @@ fun AuthScreen(
         ) {
             // Institutional Crest & Header
             InstitutionalWelcomeHeader()
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Prominent Default Test Credentials Quick-Launch & Auto-fill Matrix
-            DefaultCredentialsTestingPanel(
-                onAutoFill = { schoolCode, user, pass ->
-                    registrationCodeInput = schoolCode
-                    usernameInput = user
-                    passwordInput = pass
-                    Toast.makeText(context, "Filled test credentials for $user", Toast.LENGTH_SHORT).show()
-                },
-                onDirectLogin = { schoolCode, user, pass ->
-                    registrationCodeInput = schoolCode
-                    usernameInput = user
-                    passwordInput = pass
-                    isLookupLoading = true
-                    viewModel.lookupRegistrationCode(schoolCode) { success, msg ->
-                        if (success) {
-                            isLookupLoading = false
-                            isLoginLoading = true
-                            viewModel.loginWithCredentials(user, pass) { loginSuccess, loginMsg ->
-                                isLoginLoading = false
-                                if (loginSuccess) {
-                                    Toast.makeText(context, "Logged in as $user ($loginMsg)", Toast.LENGTH_SHORT).show()
-                                    onLoginSuccess()
-                                } else {
-                                    Toast.makeText(context, loginMsg, Toast.LENGTH_LONG).show()
-                                }
-                            }
-                        } else {
-                            isLookupLoading = false
-                            Toast.makeText(context, "School verification issue: $msg", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                },
-                isActionLoading = isLookupLoading || isLoginLoading
-            )
 
             Spacer(modifier = Modifier.height(16.dp))
 
@@ -254,6 +218,19 @@ fun AuthScreen(
                                 isLoginLoading = true
                                 loginErrorMessage = null
                                 viewModel.loginWithCredentials(usernameInput, passwordInput) { success, message ->
+                                    isLoginLoading = false
+                                    if (success) {
+                                        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                                        onLoginSuccess()
+                                    } else {
+                                        loginErrorMessage = message
+                                    }
+                                }
+                            },
+                            onRegister = { name, email, pass ->
+                                isLoginLoading = true
+                                loginErrorMessage = null
+                                viewModel.registerUser(email, pass, name) { success, message ->
                                     isLoginLoading = false
                                     if (success) {
                                         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
@@ -475,28 +452,30 @@ fun RegistrationLookupStage(
                 testTag = "registration_code_input"
             )
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier
-                    .padding(top = 8.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFFEFF6FF))
-                    .clickable { onCodeChange("3477") }
-                    .padding(horizontal = 10.dp, vertical = 5.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Key,
-                    contentDescription = "Default School",
-                    tint = GovNavyPrimary,
-                    modifier = Modifier.size(13.dp)
-                )
-                Text(
-                    text = "Default Test School: 3477 (St. Xavier's) • Tap to fill",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = GovNavyPrimary
-                )
+            if (BuildConfig.DEBUG) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier
+                        .padding(top = 8.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFFEFF6FF))
+                        .clickable { onCodeChange("3477") }
+                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Key,
+                        contentDescription = "Default School",
+                        tint = GovNavyPrimary,
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Text(
+                        text = "Default Test School: 3477 (St. Xavier's) • Tap to fill",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = GovNavyPrimary
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(18.dp))
@@ -561,6 +540,7 @@ fun CredentialsLoginStage(
     isLoading: Boolean,
     errorMessage: String?,
     onLogin: () -> Unit,
+    onRegister: ((String, String, String) -> Unit)? = null,
     onChangeSchool: () -> Unit,
     onForgotPassword: () -> Unit,
     onQuickSelectRole: (String, String) -> Unit
@@ -641,188 +621,344 @@ fun CredentialsLoginStage(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Default Credentials Testing Notice Banner
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(10.dp),
-                color = Color(0xFFEFF6FF),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFBFDBFE))
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Key,
-                        contentDescription = "Default Credentials",
-                        tint = GovNavyPrimary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Default Credentials Pre-filled: principal / Password@123. Tap 'Login' below or select another test role.",
-                        fontSize = 11.5.sp,
-                        color = GovNavyPrimary,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // Select Organization Dropdown (Screenshot 4)
-            LiquidGlassDropdown(
-                label = "Select organization",
-                selectedOption = institution?.name ?: "St. Xavier's International Academy",
-                options = listOf(institution?.name ?: "St. Xavier's International Academy"),
-                onOptionSelected = {},
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Default.CorporateFare,
-                        contentDescription = "Org",
-                        tint = GovSlateMuted,
-                        modifier = Modifier.size(18.dp)
-                    )
-                },
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // Select Academic Batch Dropdown (Screenshot 4)
-            LiquidGlassDropdown(
-                label = "Select batch",
-                selectedOption = selectedBatch,
-                options = batches,
-                onOptionSelected = onBatchChange,
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Default.DateRange,
-                        contentDescription = "Batch",
-                        tint = GovSlateMuted,
-                        modifier = Modifier.size(18.dp)
-                    )
-                },
-                modifier = Modifier.fillMaxWidth(),
-                testTag = "batch_selector_dropdown"
-            )
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // Enter Username Text Field (Screenshot 4)
-            LiquidGlassTextField(
-                value = username,
-                onValueChange = onUsernameChange,
-                placeholder = "Enter Username or Admission No.",
-                label = "Enter Username",
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Default.AccountCircle,
-                        contentDescription = "Username",
-                        tint = GovSlateMuted,
-                        modifier = Modifier.size(18.dp)
-                    )
-                },
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Text,
-                    imeAction = ImeAction.Next
-                ),
-                modifier = Modifier.fillMaxWidth(),
-                testTag = "username_input_field"
-            )
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // Enter Password Text Field with Visibility Toggle (Screenshot 4)
-            LiquidGlassTextField(
-                value = password,
-                onValueChange = onPasswordChange,
-                placeholder = "Enter Password",
-                label = "Enter Password",
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Default.Lock,
-                        contentDescription = "Password",
-                        tint = GovSlateMuted,
-                        modifier = Modifier.size(18.dp)
-                    )
-                },
-                trailingIcon = {
-                    IconButton(onClick = onTogglePasswordVisibility) {
-                        Icon(
-                            imageVector = if (isPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                            contentDescription = if (isPasswordVisible) "Hide Password" else "Show Password",
-                            tint = GovSlateMuted,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                },
-                visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Password,
-                    imeAction = ImeAction.Done
-                ),
-                keyboardActions = KeyboardActions(
-                    onDone = { onLogin() }
-                ),
-                isError = errorMessage != null,
-                errorMessage = errorMessage,
-                modifier = Modifier.fillMaxWidth(),
-                testTag = "password_input_field"
-            )
-
-            // Forgot Password Link matching Screenshot 4
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
-            ) {
-                TextButton(
-                    onClick = onForgotPassword,
-                    modifier = Modifier.testTag("forgot_password_button")
-                ) {
-                    Text(
-                        text = "Forgot Password ?",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = GovNavyPrimary
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Primary Warm Gradient "Login" Button (Screenshot 4)
-            LiquidGlassButton(
-                text = "Login",
-                onClick = onLogin,
-                isLoading = isLoading,
-                modifier = Modifier.fillMaxWidth(),
-                testTag = "submit_login_button"
-            )
-
-            Spacer(modifier = Modifier.height(18.dp))
-
-            // Quick Institutional Demo Switcher Chips
-            Text(
-                text = "Default Testing Accounts (Tap to Auto-fill):",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                color = GovNavyPrimary,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
+            // Authentication Mode Toggle: Login vs Register Student Account
+            var isRegisterMode by remember { mutableStateOf(false) }
+            var registerFullName by remember { mutableStateOf("") }
+            var registerEmail by remember { mutableStateOf("") }
+            var registerPassword by remember { mutableStateOf("") }
+            var registerConfirmPassword by remember { mutableStateOf("") }
 
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xFFF1F5F9))
+                    .padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                DemoCredentialChip("👑 Principal", "principal", "Password@123", onQuickSelectRole)
-                DemoCredentialChip("📋 In-Charge", "incharge_10a", "Password@123", onQuickSelectRole)
-                DemoCredentialChip("👩‍🏫 Teacher", "faculty_meenakshi", "Password@123", onQuickSelectRole)
-                DemoCredentialChip("🎒 Student", "aarav_sharma", "Password@123", onQuickSelectRole)
-                DemoCredentialChip("👨‍👩‍👧 Parent", "vikram_sharma", "Password@123", onQuickSelectRole)
-                DemoCredentialChip("💼 Accountant", "accountant_mehta", "Password@123", onQuickSelectRole)
+                Surface(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { isRegisterMode = false },
+                    color = if (!isRegisterMode) GovNavyPrimary else Color.Transparent,
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        text = "Sign In",
+                        modifier = Modifier.padding(vertical = 8.dp),
+                        textAlign = TextAlign.Center,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (!isRegisterMode) PureWhite else GovSlateDark
+                    )
+                }
+
+                Surface(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { isRegisterMode = true },
+                    color = if (isRegisterMode) GovNavyPrimary else Color.Transparent,
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        text = "Register Student",
+                        modifier = Modifier.padding(vertical = 8.dp),
+                        textAlign = TextAlign.Center,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isRegisterMode) PureWhite else GovSlateDark
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            if (!isRegisterMode) {
+                // SIGN IN WORKFLOW
+                LiquidGlassDropdown(
+                    label = "Select organization",
+                    selectedOption = institution?.name ?: "St. Xavier's International Academy",
+                    options = listOf(institution?.name ?: "St. Xavier's International Academy"),
+                    onOptionSelected = {},
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.CorporateFare,
+                            contentDescription = "Org",
+                            tint = GovSlateMuted,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                LiquidGlassDropdown(
+                    label = "Select batch",
+                    selectedOption = selectedBatch,
+                    options = batches,
+                    onOptionSelected = onBatchChange,
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.DateRange,
+                            contentDescription = "Batch",
+                            tint = GovSlateMuted,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    testTag = "batch_selector_dropdown"
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                LiquidGlassTextField(
+                    value = username,
+                    onValueChange = onUsernameChange,
+                    placeholder = "Enter Email or Username",
+                    label = "Enter Username / Email",
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.AccountCircle,
+                            contentDescription = "Username",
+                            tint = GovSlateMuted,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Email,
+                        imeAction = ImeAction.Next
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                    testTag = "username_input_field"
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                LiquidGlassTextField(
+                    value = password,
+                    onValueChange = onPasswordChange,
+                    placeholder = "Enter Password",
+                    label = "Enter Password",
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = "Password",
+                            tint = GovSlateMuted,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    trailingIcon = {
+                        IconButton(onClick = onTogglePasswordVisibility) {
+                            Icon(
+                                imageVector = if (isPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = if (isPasswordVisible) "Hide Password" else "Show Password",
+                                tint = GovSlateMuted,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    },
+                    visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                        imeAction = ImeAction.Done
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onDone = { onLogin() }
+                    ),
+                    isError = errorMessage != null,
+                    errorMessage = errorMessage,
+                    modifier = Modifier.fillMaxWidth(),
+                    testTag = "password_input_field"
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(
+                        onClick = onForgotPassword,
+                        modifier = Modifier.testTag("forgot_password_button")
+                    ) {
+                        Text(
+                            text = "Forgot Password ?",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = GovNavyPrimary
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                LiquidGlassButton(
+                    text = "Sign In to Campus",
+                    onClick = onLogin,
+                    isLoading = isLoading,
+                    modifier = Modifier.fillMaxWidth(),
+                    testTag = "submit_login_button"
+                )
+            } else {
+                // REGISTRATION WORKFLOW - STRICT STUDENT SAFE DEFAULT ROLE
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color(0xFFEFF6FF),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFBFDBFE))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Security,
+                            contentDescription = "Safe Default Role",
+                            tint = GovNavyPrimary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text(
+                                text = "Default Safe Role: STUDENT",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = GovNavyPrimary
+                            )
+                            Text(
+                                text = "All public account registrations receive the safe STUDENT role. Administrative and staff roles require trusted authorization.",
+                                fontSize = 10.5.sp,
+                                color = GovSlateMuted
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                LiquidGlassTextField(
+                    value = registerFullName,
+                    onValueChange = { registerFullName = it },
+                    placeholder = "Enter Full Name (e.g. Aarav Sharma)",
+                    label = "Full Name",
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.AccountCircle,
+                            contentDescription = "Name",
+                            tint = GovSlateMuted,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Text,
+                        imeAction = ImeAction.Next
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                    testTag = "register_fullname_field"
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                LiquidGlassTextField(
+                    value = registerEmail,
+                    onValueChange = { registerEmail = it },
+                    placeholder = "Enter Email Address (e.g. aarav@stxaviers.edu)",
+                    label = "Email Address",
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.AccountCircle,
+                            contentDescription = "Email",
+                            tint = GovSlateMuted,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Email,
+                        imeAction = ImeAction.Next
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                    testTag = "register_email_field"
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                LiquidGlassTextField(
+                    value = registerPassword,
+                    onValueChange = { registerPassword = it },
+                    placeholder = "Choose Password (min 6 characters)",
+                    label = "Password",
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = "Password",
+                            tint = GovSlateMuted,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                        imeAction = ImeAction.Next
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                    testTag = "register_password_field"
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                LiquidGlassTextField(
+                    value = registerConfirmPassword,
+                    onValueChange = { registerConfirmPassword = it },
+                    placeholder = "Confirm Password",
+                    label = "Confirm Password",
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = "Confirm Password",
+                            tint = GovSlateMuted,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                        imeAction = ImeAction.Done
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                    testTag = "register_confirm_password_field"
+                )
+
+                if (errorMessage != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = errorMessage,
+                        fontSize = 11.sp,
+                        color = GovRedAlert,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+            val currentContext = LocalContext.current
+            LiquidGlassButton(
+                text = "Create Student Account",
+                onClick = {
+                    if (registerPassword != registerConfirmPassword) {
+                        android.widget.Toast.makeText(
+                            currentContext,
+                            "Passwords do not match",
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    } else {
+                        onRegister?.invoke(registerFullName, registerEmail, registerPassword)
+                    }
+                },
+                    isLoading = isLoading,
+                    modifier = Modifier.fillMaxWidth(),
+                    testTag = "submit_register_button"
+                )
             }
         }
     }
@@ -991,7 +1127,7 @@ fun InstitutionalFooter() {
             color = GovSlateMuted
         )
         Text(
-            text = "Autonomous Central Cloud Platform • ISO 9001:2026 Certified",
+            text = "Multi-Tenant Institutional Cloud Platform",
             fontSize = 10.sp,
             color = GovSlateMuted.copy(alpha = 0.8f)
         )
@@ -1017,6 +1153,7 @@ fun DefaultCredentialsTestingPanel(
     onDirectLogin: (schoolCode: String, username: String, password: String) -> Unit,
     isActionLoading: Boolean = false
 ) {
+    if (!BuildConfig.DEBUG) return
     var isExpanded by remember { mutableStateOf(false) }
 
     Surface(

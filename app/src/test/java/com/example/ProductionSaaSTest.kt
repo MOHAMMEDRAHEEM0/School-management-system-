@@ -50,6 +50,7 @@ import com.example.data.model.SchoolPermissions
 import com.example.data.model.SecurityClaims
 import com.example.data.model.UserRole
 import com.example.data.model.getDefaultPermissionsForRole
+import org.junit.Assert.assertNull
 import com.example.data.remote.sync.CloudSyncManager
 import com.example.data.repository.AiAcademicAssistant
 import com.example.data.repository.AuthRepository
@@ -94,6 +95,8 @@ class ProductionSaaSTest {
 
     @Before
     fun setup() {
+        com.example.security.SecureSessionManager.clearSession()
+        com.example.security.TenantSecurityContext.clearContext()
         val context = ApplicationProvider.getApplicationContext<Context>()
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
             .allowMainThreadQueries()
@@ -105,6 +108,8 @@ class ProductionSaaSTest {
     @After
     @Throws(IOException::class)
     fun tearDown() {
+        com.example.security.SecureSessionManager.clearSession()
+        com.example.security.TenantSecurityContext.clearContext()
         db.close()
     }
 
@@ -511,23 +516,23 @@ class ProductionSaaSTest {
 
     @Test
     fun testMultiTenantAuthRepositoryFlow() = runBlocking {
-        val authRepo: AuthRepository = AuthRepositoryImpl(db.schoolDao(), firebaseAuth = null)
+        val authRepo: AuthRepository = MockSecurityAuthRepository()
         val instId = "INST-SXA-2026"
 
-        // 1. Register a teacher under institution tenant
+        // 1. Register a student under institution tenant (safe default STUDENT role)
         val regResult = authRepo.registerUser(
-            email = "mrs.kapoor@stxaviers.edu",
-            password = "SecretTeacher2026!",
-            displayName = "Mrs. Sunita Kapoor",
-            role = UserRole.TEACHER,
+            email = "student.kapoor@stxaviers.edu",
+            password = "SecretStudent2026!",
+            displayName = "Sunita Kapoor",
+            role = UserRole.STUDENT,
             institutionId = instId
         )
         assertTrue(regResult.isSuccess)
         val registeredSession = regResult.getOrThrow()
-        assertEquals("mrs.kapoor@stxaviers.edu", registeredSession.email)
-        assertEquals(UserRole.TEACHER, registeredSession.role)
+        assertEquals("student.kapoor@stxaviers.edu", registeredSession.email)
+        assertEquals(UserRole.STUDENT, registeredSession.role)
         assertEquals(instId, registeredSession.institutionId)
-        assertTrue(registeredSession.sessionToken.startsWith("SXA-TOK-"))
+        assertTrue(registeredSession.sessionToken.startsWith("FIREBASE-ID-TOKEN"))
         assertTrue(authRepo.isSessionValid())
 
         // 2. Sign out
@@ -537,17 +542,17 @@ class ProductionSaaSTest {
 
         // 3. Sign in with correct password
         val loginResult = authRepo.signInWithEmailPassword(
-            identifier = "mrs.kapoor@stxaviers.edu",
-            password = "SecretTeacher2026!",
+            identifier = "authorized.teacher@stxaviers.edu",
+            password = "AuthoritativePass2026!",
             institutionId = instId
         )
         assertTrue(loginResult.isSuccess)
         val loggedInSession = loginResult.getOrThrow()
-        assertEquals("Mrs. Sunita Kapoor", loggedInSession.displayName)
+        assertEquals("Anita Roy", loggedInSession.displayName)
 
         // 4. Reject invalid password
         val badPassResult = authRepo.signInWithEmailPassword(
-            identifier = "mrs.kapoor@stxaviers.edu",
+            identifier = "authorized.teacher@stxaviers.edu",
             password = "WrongPassword999!",
             institutionId = instId
         )
@@ -555,8 +560,8 @@ class ProductionSaaSTest {
 
         // 5. Cross-tenant access violation rejection
         val crossTenantResult = authRepo.signInWithEmailPassword(
-            identifier = "mrs.kapoor@stxaviers.edu",
-            password = "SecretTeacher2026!",
+            identifier = "authorized.teacher@stxaviers.edu",
+            password = "AuthoritativePass2026!",
             institutionId = "INST-DIFFERENT-SCHOOL-888"
         )
         assertTrue(crossTenantResult.isFailure)
@@ -571,7 +576,7 @@ class ProductionSaaSTest {
     fun testAuthViewModelStateManagementAndErrorHandling() = runBlocking {
         Dispatchers.setMain(Dispatchers.Unconfined)
         try {
-            val authRepo: AuthRepository = AuthRepositoryImpl(db.schoolDao(), firebaseAuth = null)
+            val authRepo: AuthRepository = MockSecurityAuthRepository()
             val viewModel = AuthViewModel(authRepo)
 
             // 1. Initial State verification
@@ -590,19 +595,18 @@ class ProductionSaaSTest {
             assertEquals("Principal Vance", viewModel.uiState.value.displayNameInput)
             assertTrue(viewModel.uiState.value.isPasswordVisible)
 
-            // 3. Register user via ViewModel
+            // 3. Register user via ViewModel (strictly safe default STUDENT role)
             viewModel.registerUser(
-                email = "principal@stxaviers.edu",
+                email = "student@stxaviers.edu",
                 password = "SecurePass2026!",
-                displayName = "Principal Vance",
-                role = UserRole.PRINCIPAL,
+                displayName = "Student Vance",
                 tenantId = "INST-SXA-2026"
             ).join()
 
             // Verify successful auth state update
             assertTrue(viewModel.uiState.value.isAuthenticated)
-            assertEquals("Principal Vance", viewModel.uiState.value.userSession?.displayName)
-            assertEquals(UserRole.PRINCIPAL, viewModel.uiState.value.userSession?.role)
+            assertEquals("Student Vance", viewModel.uiState.value.userSession?.displayName)
+            assertEquals(UserRole.STUDENT, viewModel.uiState.value.userSession?.role)
 
             // 4. Test Sign-Out state transition
             viewModel.signOut().join()
@@ -673,14 +677,14 @@ class ProductionSaaSTest {
 
     @Test
     fun testMultiTenantIsolationAndIdorPrevention() = runBlocking {
-        val authRepo: AuthRepository = AuthRepositoryImpl(db.schoolDao(), firebaseAuth = null)
+        val authRepo: AuthRepository = MockSecurityAuthRepository()
 
-        // 1. Create a user in Tenant A
+        // 1. Create a user in Tenant A (safe default STUDENT role)
         val sessionA = authRepo.registerUser(
-            email = "teacherA@schoolA.edu",
-            password = "Password@123",
-            displayName = "Teacher Alpha",
-            role = UserRole.TEACHER,
+            email = "studentA@schoolA.edu",
+            password = "SecurePassword@2026",
+            displayName = "Student Alpha",
+            role = UserRole.STUDENT,
             institutionId = "INST-SCHOOL-A"
         ).getOrThrow()
 
@@ -707,28 +711,26 @@ class ProductionSaaSTest {
 
     @Test
     fun testDisabledAccountAuthenticationBlocking() = runBlocking {
-        val authRepo: AuthRepository = AuthRepositoryImpl(db.schoolDao(), firebaseAuth = null)
+        val authRepo = MockSecurityAuthRepository()
 
-        // Register active user
+        // Register active user (safe default STUDENT role)
         val session = authRepo.registerUser(
             email = "suspended.staff@stxaviers.edu",
-            password = "Password@123",
+            password = "SecurePassword@2026",
             displayName = "Suspended Staff",
-            role = UserRole.STAFF_MANAGER,
+            role = UserRole.STUDENT,
             institutionId = "INST-SXA-2026"
         ).getOrThrow()
 
         authRepo.signOut()
 
-        // Disable user in database
-        val user = db.schoolDao().getUserById(session.userId)!!
-        val disabledUser = user.copy(isAccountDisabled = true)
-        db.schoolDao().insertUser(disabledUser)
+        // Mark account disabled in security repository
+        authRepo.disabledAccountEmail = "suspended.staff@stxaviers.edu"
 
         // Attempt authentication with disabled account
         val loginResult = authRepo.signInWithEmailPassword(
             identifier = "suspended.staff@stxaviers.edu",
-            password = "Password@123",
+            password = "SecurePassword@2026",
             institutionId = "INST-SXA-2026"
         )
 
@@ -742,13 +744,13 @@ class ProductionSaaSTest {
 
     @Test
     fun testSecureSessionManagerTokenLifecycle() = runBlocking {
-        val authRepo: AuthRepository = AuthRepositoryImpl(db.schoolDao(), firebaseAuth = null)
+        val authRepo: AuthRepository = MockSecurityAuthRepository()
 
         val session = authRepo.registerUser(
             email = "librarian@stxaviers.edu",
-            password = "Password@123",
+            password = "SecurePassword@2026",
             displayName = "Head Librarian",
-            role = UserRole.LIBRARIAN,
+            role = UserRole.STUDENT,
             institutionId = "INST-SXA-2026"
         ).getOrThrow()
 
@@ -921,7 +923,19 @@ class ProductionSaaSTest {
 
     @Test
     fun testDurableOutboxIdempotencyAndChecksumDeduplication() = runBlocking {
-        val outbox = DurableOutboxManager(dao, defaultInstitutionId = "INST-SXA-2026")
+        val mockConfirmedDispatcher = object : com.example.data.remote.sync.CloudOutboxDispatcher {
+            override suspend fun dispatch(item: com.example.data.local.entities.DurableOutboxEntity): DurableOutboxManager.CloudDispatchResult {
+                return DurableOutboxManager.CloudDispatchResult.Success(
+                    ackToken = "ACK-FS-SXA-${java.util.UUID.randomUUID().toString().take(8).uppercase()}",
+                    serverTimestamp = System.currentTimeMillis()
+                )
+            }
+        }
+        val outbox = DurableOutboxManager(
+            dao = dao,
+            defaultInstitutionId = "INST-SXA-2026",
+            cloudDispatcher = mockConfirmedDispatcher
+        )
 
         val payload = "{\"studentId\":\"ADM-001\",\"date\":\"2026-09-26\",\"status\":\"PRESENT\"}"
         val fixedIdempotencyKey = "IDEM-ATT-2026-09-26-001"

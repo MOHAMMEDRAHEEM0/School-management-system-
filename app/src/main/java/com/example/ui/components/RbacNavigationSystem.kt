@@ -63,6 +63,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.BuildConfig
 import com.example.data.model.RbacRoleCategory
 import com.example.data.model.SecurityClaims
 import com.example.data.model.UserRole
@@ -82,18 +83,24 @@ import com.example.ui.theme.GovSlateMuted
 import com.example.ui.viewmodel.SchoolViewModel
 
 /**
- * Role-Based Access Control (RBAC) Navigation Bar.
- * Allows viewing active security clearance and switching dashboard views dynamically
- * between Admin, Teacher, and Student roles.
+ * Role-Based Access Control (RBAC) Clearance Indicator Bar.
+ * Strictly non-interactive visual category indicator displaying Level 1 (Scholar/Parent),
+ * Level 2 (Faculty), and Level 3 (Exec) permission scopes.
+ * Locked strictly based on authenticated user profile without dev role-switching chips.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RbacRoleSwitcherBar(
+fun RbacClearanceIndicatorBar(
     currentRole: UserRole,
     userClaims: SecurityClaims?,
-    onSwitchRole: (UserRole) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // Complete Role Isolation: Never render clearance bar or level hints for non-admin users.
+    // Wrapped in BuildConfig.DEBUG so it only exists in developer builds for admins.
+    if (!BuildConfig.DEBUG || currentRole.rbacCategory != RbacRoleCategory.ADMIN) {
+        return
+    }
+
     var showPermissionsSheet by remember { mutableStateOf(false) }
     val currentCategory = currentRole.rbacCategory
 
@@ -102,12 +109,12 @@ fun RbacRoleSwitcherBar(
         border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
         modifier = modifier
             .fillMaxWidth()
-            .testTag("rbac_navigation_bar")
+            .testTag("rbac_clearance_bar")
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 6.dp)
+                .padding(horizontal = 12.dp, vertical = 8.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -149,7 +156,7 @@ fun RbacRoleSwitcherBar(
                     Column {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = "RBAC View: ${currentCategory.title.uppercase()}",
+                                text = "AUTH CLEARANCE: ${currentRole.label.uppercase()}",
                                 fontSize = 11.5.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = GovSlateDark
@@ -164,7 +171,7 @@ fun RbacRoleSwitcherBar(
                                 }
                             ) {
                                 Text(
-                                    text = "Lvl ${currentCategory.clearanceLevel}",
+                                    text = "Level ${currentCategory.clearanceLevel}",
                                     fontSize = 9.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = when (currentCategory) {
@@ -177,7 +184,7 @@ fun RbacRoleSwitcherBar(
                             }
                         }
                         Text(
-                            text = currentRole.clearanceTitle,
+                            text = "${currentRole.clearanceTitle} • Institutional Security Guard",
                             fontSize = 9.5.sp,
                             color = GovSlateMuted
                         )
@@ -204,38 +211,6 @@ fun RbacRoleSwitcherBar(
                     )
                 }
             }
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            // 3-Way Role Switcher Tabs (Admin | Teacher | Student)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                RbacRoleTabItem(
-                    title = "👑 Admin",
-                    subtitle = "Level 3",
-                    isSelected = currentCategory == RbacRoleCategory.ADMIN,
-                    selectedColor = GovNavyPrimary,
-                    onClick = { onSwitchRole(UserRole.ADMIN) }
-                )
-                RbacRoleTabItem(
-                    title = "👩‍🏫 Teacher",
-                    subtitle = "Level 2",
-                    isSelected = currentCategory == RbacRoleCategory.TEACHER,
-                    selectedColor = GovGreen,
-                    onClick = { onSwitchRole(UserRole.TEACHER) }
-                )
-                RbacRoleTabItem(
-                    title = "🎒 Student",
-                    subtitle = "Level 1",
-                    isSelected = currentCategory == RbacRoleCategory.STUDENT,
-                    selectedColor = Color(0xFFD97706),
-                    onClick = { onSwitchRole(UserRole.STUDENT) }
-                )
-            }
         }
     }
 
@@ -254,50 +229,67 @@ fun RbacRoleSwitcherBar(
     }
 }
 
+/**
+ * Clean non-interactive level indicator badge card.
+ */
 @Composable
-private fun RbacRoleTabItem(
-    title: String,
-    subtitle: String,
-    isSelected: Boolean,
-    selectedColor: Color,
-    onClick: () -> Unit
+private fun RbacLevelScopeBadge(
+    levelTitle: String,
+    roleScope: String,
+    isActive: Boolean,
+    activeColor: Color
 ) {
-    val bgColor by animateColorAsState(
-        targetValue = if (isSelected) selectedColor else Color(0xFFE2E8F0),
-        animationSpec = tween(200),
-        label = "tab_bg"
-    )
-    val textColor by animateColorAsState(
-        targetValue = if (isSelected) Color.White else GovSlateDark,
-        animationSpec = tween(200),
-        label = "tab_text"
-    )
-
     Surface(
-        shape = RoundedCornerShape(8.dp),
-        color = bgColor,
-        modifier = Modifier
-            .clickable(onClick = onClick)
-            .testTag("rbac_tab_${title.replace("[^a-zA-Z]".toRegex(), "").lowercase()}")
+        shape = RoundedCornerShape(10.dp),
+        color = if (isActive) activeColor else Color(0xFFF1F5F9),
+        border = BorderStroke(
+            1.dp,
+            if (isActive) activeColor else Color(0xFFCBD5E1)
+        ),
+        modifier = Modifier.testTag("rbac_level_badge_${levelTitle.replace(" ", "_").lowercase()}")
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = title,
-                fontSize = 11.sp,
-                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                color = textColor
+            Icon(
+                imageVector = if (isActive) Icons.Default.CheckCircle else Icons.Default.Lock,
+                contentDescription = null,
+                tint = if (isActive) Color.White else GovSlateMuted,
+                modifier = Modifier.size(13.dp)
             )
-            Spacer(modifier = Modifier.width(4.dp))
-            Text(
-                text = "($subtitle)",
-                fontSize = 9.sp,
-                color = if (isSelected) Color.White.copy(alpha = 0.8f) else GovSlateMuted
-            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Column {
+                Text(
+                    text = levelTitle,
+                    fontSize = 11.sp,
+                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium,
+                    color = if (isActive) Color.White else GovSlateDark
+                )
+                Text(
+                    text = if (isActive) "ACTIVE CLEARANCE" else roleScope,
+                    fontSize = 8.5.sp,
+                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
+                    color = if (isActive) Color.White.copy(alpha = 0.9f) else GovSlateMuted
+                )
+            }
         }
     }
+}
+
+// Deprecated alias kept for binary compatibility during migration
+@Composable
+fun RbacRoleSwitcherBar(
+    currentRole: UserRole,
+    userClaims: SecurityClaims?,
+    onSwitchRole: (UserRole) -> Unit = {},
+    modifier: Modifier = Modifier
+) {
+    RbacClearanceIndicatorBar(
+        currentRole = currentRole,
+        userClaims = userClaims,
+        modifier = modifier
+    )
 }
 
 /**
@@ -531,23 +523,11 @@ fun RbacAccessDeniedDialog(
             }
         },
         confirmButton = {
-            if (onSwitchToAuthorizedRole != null) {
-                Button(
-                    onClick = {
-                        onDismiss()
-                        onSwitchToAuthorizedRole()
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = GovNavyPrimary)
-                ) {
-                    Text("Switch Role")
-                }
-            } else {
-                Button(
-                    onClick = onDismiss,
-                    colors = ButtonDefaults.buttonColors(containerColor = GovNavyPrimary)
-                ) {
-                    Text("Understood")
-                }
+            Button(
+                onClick = onDismiss,
+                colors = ButtonDefaults.buttonColors(containerColor = GovNavyPrimary)
+            ) {
+                Text("Understood")
             }
         },
         dismissButton = {
@@ -574,6 +554,7 @@ fun RbacDashboardHost(
     onAccessDenied: (resource: String, required: String) -> Unit,
     onNavigateToAttendance: () -> Unit = {},
     onNavigateToExamResults: () -> Unit = {},
+    onNavigateToWhatsAppHub: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     AnimatedContent(
@@ -589,7 +570,8 @@ fun RbacDashboardHost(
                 // Admin Dashboard: Complete Administrative View
                 PrincipalDashboard(
                     viewModel = viewModel,
-                    onNavigateToAuditLogs = onNavigateToAuditLogs
+                    onNavigateToAuditLogs = onNavigateToAuditLogs,
+                    onNavigateToWhatsAppHub = onNavigateToWhatsAppHub
                 )
             }
             RbacRoleCategory.TEACHER -> {

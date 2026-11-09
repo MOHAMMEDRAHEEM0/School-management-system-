@@ -29,14 +29,20 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.FactCheck
 import androidx.compose.material.icons.filled.Assessment
+import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.EventAvailable
 import androidx.compose.material.icons.filled.FactCheck
 import androidx.compose.material.icons.filled.Grading
+import androidx.compose.material.icons.filled.Payment
 import androidx.compose.material.icons.filled.School
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.outlined.Assessment
+import androidx.compose.material.icons.outlined.Chat
 import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.material.icons.outlined.FactCheck
+import androidx.compose.material.icons.outlined.Payment
+import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
@@ -64,6 +70,8 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
+import com.example.core.AppFeature
+import com.example.core.FeatureAvailability
 import com.example.data.model.RbacRoleCategory
 import com.example.data.model.SchoolPermissions
 import com.example.data.model.UserRole
@@ -73,6 +81,8 @@ import com.example.ui.screens.AttendanceScreen
 import com.example.ui.screens.AuditLogsScreen
 import com.example.ui.screens.ExamResultsScreen
 import com.example.ui.screens.RegisterScanScreen
+import com.example.ui.screens.TreasuryScreen
+import com.example.ui.screens.WhatsAppHubScreen
 import com.example.ui.theme.GovBorderGrey
 import com.example.ui.theme.GovGreen
 import com.example.ui.theme.GovNavyDark
@@ -89,8 +99,12 @@ import com.example.ui.viewmodel.SchoolViewModel
 // =============================================================================
 
 object AppDestinations {
-    const val DASHBOARD = "dashboard"
+    const val COMMAND = "command"
+    const val DASHBOARD = "command" // alias for backwards compatibility
     const val ATTENDANCE = "attendance"
+    const val TREASURY = "treasury"
+    const val WHATSAPP = "whatsapp"
+    const val SECURITY = "security"
     const val EXAM_RESULTS = "exam_results"
     const val AUDIT_LOGS = "audit_logs"
     const val REGISTER_SCAN = "register_scan"
@@ -104,12 +118,12 @@ sealed class BottomNavItem(
     val testTag: String,
     val badgeLabel: String? = null
 ) {
-    object Dashboard : BottomNavItem(
-        route = AppDestinations.DASHBOARD,
-        title = "Dashboard",
+    object Command : BottomNavItem(
+        route = AppDestinations.COMMAND,
+        title = "Command",
         selectedIcon = Icons.Filled.Dashboard,
         unselectedIcon = Icons.Outlined.Dashboard,
-        testTag = "nav_item_dashboard"
+        testTag = "nav_item_command"
     )
 
     object Attendance : BottomNavItem(
@@ -121,20 +135,69 @@ sealed class BottomNavItem(
         badgeLabel = "Live"
     )
 
+    object Treasury : BottomNavItem(
+        route = AppDestinations.TREASURY,
+        title = "Treasury",
+        selectedIcon = Icons.Filled.Payment,
+        unselectedIcon = Icons.Outlined.Payment,
+        testTag = "nav_item_treasury"
+    )
+
+    object WhatsApp : BottomNavItem(
+        route = AppDestinations.WHATSAPP,
+        title = "WhatsApp",
+        selectedIcon = Icons.Filled.Chat,
+        unselectedIcon = Icons.Outlined.Chat,
+        testTag = "nav_item_whatsapp",
+        badgeLabel = "Hub"
+    )
+
+    object Security : BottomNavItem(
+        route = AppDestinations.SECURITY,
+        title = "Security",
+        selectedIcon = Icons.Filled.Shield,
+        unselectedIcon = Icons.Outlined.Shield,
+        testTag = "nav_item_security",
+        badgeLabel = "L3"
+    )
+
+    // Backwards-compatible aliases for tests and existing references
+    object Dashboard : BottomNavItem(
+        route = AppDestinations.COMMAND,
+        title = "Dashboard",
+        selectedIcon = Icons.Filled.Dashboard,
+        unselectedIcon = Icons.Outlined.Dashboard,
+        testTag = "nav_item_dashboard"
+    )
+
     object ExamResults : BottomNavItem(
         route = AppDestinations.EXAM_RESULTS,
         title = "Exam Results",
-        selectedIcon = Icons.Filled.Assessment,
-        unselectedIcon = Icons.Outlined.Assessment,
+        selectedIcon = Icons.Filled.Grading,
+        unselectedIcon = Icons.Default.Assessment,
         testTag = "nav_item_exam_results"
     )
 }
 
 val BottomNavDestinations = listOf(
-    BottomNavItem.Dashboard,
+    BottomNavItem.Command,
     BottomNavItem.Attendance,
-    BottomNavItem.ExamResults
+    BottomNavItem.Treasury,
+    BottomNavItem.WhatsApp,
+    BottomNavItem.Security
 )
+
+val ActiveBottomNavDestinations: List<BottomNavItem>
+    get() = BottomNavDestinations.filter { item ->
+        when (item.route) {
+            AppDestinations.COMMAND -> true
+            AppDestinations.ATTENDANCE -> FeatureAvailability.isEnabled(AppFeature.DAILY_ATTENDANCE)
+            AppDestinations.TREASURY -> FeatureAvailability.isEnabled(AppFeature.FEE_RECEIPTS)
+            AppDestinations.WHATSAPP -> FeatureAvailability.isEnabled(AppFeature.WHATSAPP_AUTOMATION)
+            AppDestinations.SECURITY -> FeatureAvailability.isEnabled(AppFeature.SECURITY_AUDIT_LOGS)
+            else -> true
+        }
+    }
 
 // =============================================================================
 // BOTTOM NAVIGATION BAR COMPOSABLE
@@ -150,28 +213,34 @@ fun AppBottomNavigationBar(
     val currentDestination = navBackStackEntry?.destination
 
     // Only show bottom navigation on primary destinations
-    val showBottomBar = BottomNavDestinations.any { item ->
+    val showBottomBar = ActiveBottomNavDestinations.any { item ->
         currentDestination?.hierarchy?.any { it.route == item.route } == true
     }
 
     if (!showBottomBar) return
 
     Surface(
-        color = PureWhite,
-        shadowElevation = 8.dp,
-        border = androidx.compose.foundation.BorderStroke(1.dp, GovBorderGrey.copy(alpha = 0.5f)),
+        color = Color(0xFFFFFFFF).copy(alpha = 0.95f),
+        shadowElevation = 6.dp,
         modifier = modifier
             .fillMaxWidth()
             .testTag("app_bottom_nav_bar")
     ) {
-        NavigationBar(
-            containerColor = PureWhite,
-            contentColor = GovNavyPrimary,
-            tonalElevation = 0.dp,
-            windowInsets = WindowInsets.navigationBars,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            BottomNavDestinations.forEach { item ->
+        Column {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(0.8.dp)
+                    .background(Color(0xFFE2E8F0).copy(alpha = 0.8f))
+            )
+            NavigationBar(
+                containerColor = Color.Transparent,
+                contentColor = GovNavyPrimary,
+                tonalElevation = 0.dp,
+                windowInsets = WindowInsets.navigationBars,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+            ActiveBottomNavDestinations.forEach { item ->
                 val selected = currentDestination?.hierarchy?.any { it.route == item.route } == true
 
                 NavigationBarItem(
@@ -232,6 +301,7 @@ fun AppBottomNavigationBar(
             }
         }
     }
+}
 }
 
 // =============================================================================
@@ -311,6 +381,15 @@ fun AppNavGraph(
                     onNavigateToAuditLogs = onNavigateToAuditLogs,
                     onNavigateToScanScreen = onNavigateToScanScreen,
                     onAccessDenied = onAccessDenied,
+                    onNavigateToWhatsAppHub = {
+                        navController.navigate(AppDestinations.WHATSAPP) {
+                            popUpTo(navController.graph.findStartDestination().id) {
+                                saveState = true
+                            }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -339,7 +418,43 @@ fun AppNavGraph(
         }
 
         // =====================================================================
-        // 3. EXAM RESULTS VIEW (MARKS ENTRY, GRADE CARDS & DIGITAL TRANSCRIPTS)
+        // 3. TREASURY VIEW (FEE LEDGERS, PAYMENT GATEWAY & SANDBOX DASHBOARD)
+        // =====================================================================
+        composable(route = AppDestinations.TREASURY) {
+            TreasuryScreen(
+                viewModel = viewModel,
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        // =====================================================================
+        // 4. WHATSAPP HUB & ATTENDANCE PUSH SYSTEM
+        // =====================================================================
+        composable(route = AppDestinations.WHATSAPP) {
+            WhatsAppHubScreen(
+                viewModel = viewModel,
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        // =====================================================================
+        // 5. SECURITY DIRECTORATE & CRYPTOGRAPHIC AUDIT LOGS
+        // =====================================================================
+        composable(route = AppDestinations.SECURITY) {
+            AuditLogsScreen(
+                viewModel = viewModel,
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        // =====================================================================
+        // 6. EXAM RESULTS VIEW (MARKS ENTRY, GRADE CARDS & DIGITAL TRANSCRIPTS)
         // =====================================================================
         composable(route = AppDestinations.EXAM_RESULTS) {
             ExamResultsScreen(
@@ -361,7 +476,7 @@ fun AppNavGraph(
         }
 
         // =====================================================================
-        // 4. AUDIT LOGS SCREEN
+        // 7. AUDIT LOGS SCREEN (Direct Route)
         // =====================================================================
         composable(route = AppDestinations.AUDIT_LOGS) {
             AuditLogsScreen(
@@ -373,7 +488,7 @@ fun AppNavGraph(
         }
 
         // =====================================================================
-        // 5. REGISTER SCAN CAMERA SCREEN
+        // 8. REGISTER SCAN CAMERA SCREEN
         // =====================================================================
         composable(route = AppDestinations.REGISTER_SCAN) {
             RegisterScanScreen(
@@ -464,38 +579,40 @@ private fun QuickJumpNavigationHeader(
                     }
                 }
 
-                // Quick Jump to Exam Results
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = GovSaffron.copy(alpha = 0.1f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, GovSaffron.copy(alpha = 0.3f)),
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .testTag("btn_quick_jump_exam_results")
-                ) {
-                    Row(
+                // Quick Jump to Exam Results (hidden when disabled in Phase A)
+                if (FeatureAvailability.isExamResultsEnabled) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = GovSaffron.copy(alpha = 0.1f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, GovSaffron.copy(alpha = 0.3f)),
                         modifier = Modifier
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .clip(RoundedCornerShape(12.dp))
+                            .testTag("btn_quick_jump_exam_results")
                     ) {
-                        androidx.compose.material3.TextButton(
-                            onClick = onNavigateToExamResults,
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
-                            modifier = Modifier.height(24.dp)
+                        Row(
+                            modifier = Modifier
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Assessment,
-                                contentDescription = null,
-                                tint = Color(0xFFB45309),
-                                modifier = Modifier.size(13.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "Exam Results",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFFB45309)
-                            )
+                            androidx.compose.material3.TextButton(
+                                onClick = onNavigateToExamResults,
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+                                modifier = Modifier.height(24.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Assessment,
+                                    contentDescription = null,
+                                    tint = Color(0xFFB45309),
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Exam Results",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFFB45309)
+                                )
+                            }
                         }
                     }
                 }

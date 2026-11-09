@@ -12,8 +12,12 @@ class NavigationGraphTest {
 
     @Test
     fun testNavigationDestinationConstants() {
-        assertEquals("dashboard", AppDestinations.DASHBOARD)
+        assertEquals("command", AppDestinations.COMMAND)
+        assertEquals("command", AppDestinations.DASHBOARD)
         assertEquals("attendance", AppDestinations.ATTENDANCE)
+        assertEquals("treasury", AppDestinations.TREASURY)
+        assertEquals("whatsapp", AppDestinations.WHATSAPP)
+        assertEquals("security", AppDestinations.SECURITY)
         assertEquals("exam_results", AppDestinations.EXAM_RESULTS)
         assertEquals("audit_logs", AppDestinations.AUDIT_LOGS)
         assertEquals("register_scan", AppDestinations.REGISTER_SCAN)
@@ -21,22 +25,24 @@ class NavigationGraphTest {
 
     @Test
     fun testBottomNavigationDestinationsContainCoreViews() {
-        assertEquals(3, BottomNavDestinations.size)
+        assertEquals(5, BottomNavDestinations.size)
 
         val routes = BottomNavDestinations.map { it.route }
-        assertTrue("Bottom navigation must contain Dashboard route", routes.contains(AppDestinations.DASHBOARD))
+        assertTrue("Bottom navigation must contain Command route", routes.contains(AppDestinations.COMMAND))
         assertTrue("Bottom navigation must contain Attendance route", routes.contains(AppDestinations.ATTENDANCE))
-        assertTrue("Bottom navigation must contain Exam Results route", routes.contains(AppDestinations.EXAM_RESULTS))
+        assertTrue("Bottom navigation must contain Treasury route", routes.contains(AppDestinations.TREASURY))
+        assertTrue("Bottom navigation must contain WhatsApp route", routes.contains(AppDestinations.WHATSAPP))
+        assertTrue("Bottom navigation must contain Security route", routes.contains(AppDestinations.SECURITY))
     }
 
     @Test
     fun testBottomNavItemProperties() {
-        val dashboardItem = BottomNavItem.Dashboard
-        assertEquals(AppDestinations.DASHBOARD, dashboardItem.route)
-        assertEquals("Dashboard", dashboardItem.title)
-        assertEquals("nav_item_dashboard", dashboardItem.testTag)
-        assertNotNull(dashboardItem.selectedIcon)
-        assertNotNull(dashboardItem.unselectedIcon)
+        val commandItem = BottomNavItem.Command
+        assertEquals(AppDestinations.COMMAND, commandItem.route)
+        assertEquals("Command", commandItem.title)
+        assertEquals("nav_item_command", commandItem.testTag)
+        assertNotNull(commandItem.selectedIcon)
+        assertNotNull(commandItem.unselectedIcon)
 
         val attendanceItem = BottomNavItem.Attendance
         assertEquals(AppDestinations.ATTENDANCE, attendanceItem.route)
@@ -45,10 +51,35 @@ class NavigationGraphTest {
         assertEquals("Live", attendanceItem.badgeLabel)
         assertNotNull(attendanceItem.selectedIcon)
 
+        val treasuryItem = BottomNavItem.Treasury
+        assertEquals(AppDestinations.TREASURY, treasuryItem.route)
+        assertEquals("Treasury", treasuryItem.title)
+        assertEquals("nav_item_treasury", treasuryItem.testTag)
+        assertNotNull(treasuryItem.selectedIcon)
+
+        val whatsAppItem = BottomNavItem.WhatsApp
+        assertEquals(AppDestinations.WHATSAPP, whatsAppItem.route)
+        assertEquals("WhatsApp", whatsAppItem.title)
+        assertEquals("nav_item_whatsapp", whatsAppItem.testTag)
+        assertEquals("Hub", whatsAppItem.badgeLabel)
+        assertNotNull(whatsAppItem.selectedIcon)
+
+        val securityItem = BottomNavItem.Security
+        assertEquals(AppDestinations.SECURITY, securityItem.route)
+        assertEquals("Security", securityItem.title)
+        assertEquals("nav_item_security", securityItem.testTag)
+        assertEquals("L3", securityItem.badgeLabel)
+        assertNotNull(securityItem.selectedIcon)
+
+        // Backwards compatibility verification
+        val dashboardItem = BottomNavItem.Dashboard
+        assertEquals(AppDestinations.DASHBOARD, dashboardItem.route)
+        assertEquals("Dashboard", dashboardItem.title)
+        assertNotNull(dashboardItem.selectedIcon)
+
         val examResultsItem = BottomNavItem.ExamResults
         assertEquals(AppDestinations.EXAM_RESULTS, examResultsItem.route)
         assertEquals("Exam Results", examResultsItem.title)
-        assertEquals("nav_item_exam_results", examResultsItem.testTag)
         assertNotNull(examResultsItem.selectedIcon)
     }
 

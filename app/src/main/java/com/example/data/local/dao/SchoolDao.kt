@@ -106,10 +106,13 @@ interface SchoolDao {
     suspend fun updateInstitution(institution: InstitutionEntity)
 
     // =========================================================================
-    // 2. ACADEMIC CLASSES & SECTIONS (Pre-fed Database)
+    // 2. ACADEMIC CLASSES & SECTIONS (Pre-fed Database & Tenant-Isolated)
     // =========================================================================
     @Query("SELECT * FROM academic_classes WHERE isArchived = 0 ORDER BY className ASC, section ASC")
     fun getAllClasses(): Flow<List<AcademicClassEntity>>
+
+    @Query("SELECT * FROM academic_classes WHERE institutionId = :institutionId AND isArchived = 0 ORDER BY className ASC, section ASC")
+    fun getClassesForInstitution(institutionId: String): Flow<List<AcademicClassEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAcademicClass(academicClass: AcademicClassEntity)
@@ -121,10 +124,13 @@ interface SchoolDao {
     suspend fun updateAcademicClass(academicClass: AcademicClassEntity)
 
     // =========================================================================
-    // 3. STAFF MEMBERS (Fed & Managed by Principal)
+    // 3. STAFF MEMBERS (Fed & Managed by Principal - Tenant-Isolated)
     // =========================================================================
     @Query("SELECT * FROM staff_members ORDER BY roleType ASC, name ASC")
     fun getAllStaff(): Flow<List<StaffEntity>>
+
+    @Query("SELECT * FROM staff_members WHERE institutionId = :institutionId ORDER BY roleType ASC, name ASC")
+    fun getStaffForInstitution(institutionId: String): Flow<List<StaffEntity>>
 
     @Query("SELECT * FROM staff_members WHERE roleType = :roleType ORDER BY name ASC")
     fun getStaffByRole(roleType: String): Flow<List<StaffEntity>>
@@ -172,8 +178,14 @@ interface SchoolDao {
     @Query("SELECT * FROM students ORDER BY grade ASC, rollNumber ASC")
     fun getAllStudents(): Flow<List<StudentEntity>>
 
+    @Query("SELECT * FROM students WHERE institutionId = :institutionId ORDER BY grade ASC, rollNumber ASC")
+    fun getStudentsForInstitution(institutionId: String): Flow<List<StudentEntity>>
+
     @Query("SELECT * FROM students ORDER BY grade ASC, rollNumber ASC")
     suspend fun getAllStudentsList(): List<StudentEntity>
+
+    @Query("SELECT * FROM students WHERE institutionId = :institutionId ORDER BY grade ASC, rollNumber ASC")
+    suspend fun getStudentsListForInstitution(institutionId: String): List<StudentEntity>
 
     @Query("SELECT * FROM students WHERE id = :id LIMIT 1")
     suspend fun getStudentById(id: String): StudentEntity?
@@ -212,10 +224,13 @@ interface SchoolDao {
     suspend fun updateStudentPromotion(studentId: String, newGrade: String, newSection: String, status: String)
 
     // =========================================================================
-    // 5. ATTENDANCE & ROLL-CALL REGISTERS
+    // 5. ATTENDANCE & ROLL-CALL REGISTERS (Tenant-Isolated)
     // =========================================================================
     @Query("SELECT * FROM attendance ORDER BY dateTimestamp DESC")
     fun getAllAttendance(): Flow<List<AttendanceEntity>>
+
+    @Query("SELECT * FROM attendance WHERE institutionId = :institutionId ORDER BY dateTimestamp DESC")
+    fun getAttendanceForInstitution(institutionId: String): Flow<List<AttendanceEntity>>
 
     @Query("SELECT * FROM attendance WHERE studentId = :studentId ORDER BY dateTimestamp DESC")
     fun getAttendanceForStudent(studentId: String): Flow<List<AttendanceEntity>>
@@ -240,6 +255,9 @@ interface SchoolDao {
 
     @Query("SELECT * FROM attendance_records ORDER BY recordId DESC")
     fun getAllAttendanceRecords(): Flow<List<AttendanceRecordEntity>>
+
+    @Query("SELECT * FROM attendance_records WHERE institutionId = :institutionId ORDER BY recordId DESC")
+    fun getAttendanceRecordsForInstitution(institutionId: String): Flow<List<AttendanceRecordEntity>>
 
     @Query("SELECT * FROM attendance_records WHERE personId = :personId ORDER BY recordId DESC")
     fun getAttendanceForPerson(personId: String): Flow<List<AttendanceRecordEntity>>
@@ -269,10 +287,13 @@ interface SchoolDao {
     suspend fun approveBatchByPrincipal(batchId: String)
 
     // =========================================================================
-    // 6. EXAMINATIONS & REPORT CARDS
+    // 6. EXAMINATIONS & REPORT CARDS (Tenant-Isolated)
     // =========================================================================
     @Query("SELECT * FROM exam_records ORDER BY classSection ASC, rollNumber ASC")
     fun getAllExamRecords(): Flow<List<ExamRecordEntity>>
+
+    @Query("SELECT * FROM exam_records WHERE institutionId = :institutionId ORDER BY classSection ASC, rollNumber ASC")
+    fun getExamRecordsForInstitution(institutionId: String): Flow<List<ExamRecordEntity>>
 
     @Query("SELECT * FROM exam_records WHERE studentId = :studentId ORDER BY examType ASC, subject ASC")
     fun getExamRecordsForStudent(studentId: String): Flow<List<ExamRecordEntity>>
@@ -293,10 +314,13 @@ interface SchoolDao {
     suspend fun updateExamRecord(examRecord: ExamRecordEntity)
 
     // =========================================================================
-    // 7. FEE MANAGEMENT & RECEIPTS
+    // 7. FEE MANAGEMENT & RECEIPTS (Tenant-Isolated)
     // =========================================================================
     @Query("SELECT * FROM fee_records ORDER BY id ASC")
     fun getAllFeeRecords(): Flow<List<FeeRecordEntity>>
+
+    @Query("SELECT * FROM fee_records WHERE institutionId = :institutionId ORDER BY id ASC")
+    fun getFeeRecordsForInstitution(institutionId: String): Flow<List<FeeRecordEntity>>
 
     @Query("SELECT * FROM fee_records WHERE studentId = :studentId OR admissionNumber = :studentId ORDER BY id ASC")
     fun getFeeRecordsForStudent(studentId: String): Flow<List<FeeRecordEntity>>
@@ -319,10 +343,13 @@ interface SchoolDao {
     )
 
     // =========================================================================
-    // 8. CENTRALIZED DOCUMENTS & CERTIFICATES
+    // 8. CENTRALIZED DOCUMENTS & CERTIFICATES (Tenant-Isolated)
     // =========================================================================
     @Query("SELECT * FROM certificates ORDER BY issueDate DESC")
     fun getAllCertificates(): Flow<List<CertificateEntity>>
+
+    @Query("SELECT * FROM certificates WHERE institutionId = :institutionId ORDER BY issueDate DESC")
+    fun getCertificatesForInstitution(institutionId: String): Flow<List<CertificateEntity>>
 
     @Query("SELECT * FROM certificates WHERE studentId = :studentId ORDER BY issueDate DESC")
     fun getCertificatesForStudent(studentId: String): Flow<List<CertificateEntity>>
@@ -350,10 +377,13 @@ interface SchoolDao {
     )
 
     // =========================================================================
-    // 9. COMPUTERIZED DIGITAL ID CARDS
+    // 9. COMPUTERIZED DIGITAL ID CARDS (Tenant-Isolated)
     // =========================================================================
     @Query("SELECT * FROM id_card_records ORDER BY issueDate DESC")
     fun getAllIdCards(): Flow<List<IdCardRecordEntity>>
+
+    @Query("SELECT * FROM id_card_records WHERE institutionId = :institutionId ORDER BY issueDate DESC")
+    fun getIdCardsForInstitution(institutionId: String): Flow<List<IdCardRecordEntity>>
 
     @Query("SELECT * FROM id_card_records WHERE personId = :personId LIMIT 1")
     suspend fun getIdCardForPerson(personId: String): IdCardRecordEntity?
@@ -374,10 +404,13 @@ interface SchoolDao {
     suspend fun principalApproveIdCard(cardId: String, status: String, remarks: String, approvedBy: String)
 
     // =========================================================================
-    // 10. ADMISSION APPLICATIONS
+    // 10. ADMISSION APPLICATIONS (Tenant-Isolated)
     // =========================================================================
     @Query("SELECT * FROM admission_applications ORDER BY applicationDate DESC")
     fun getAllAdmissionApplications(): Flow<List<AdmissionApplicationEntity>>
+
+    @Query("SELECT * FROM admission_applications WHERE institutionId = :institutionId ORDER BY applicationDate DESC")
+    fun getAdmissionApplicationsForInstitution(institutionId: String): Flow<List<AdmissionApplicationEntity>>
 
     @Query("SELECT * FROM admission_applications WHERE applicationId = :appId LIMIT 1")
     suspend fun getAdmissionApplicationById(appId: String): AdmissionApplicationEntity?
@@ -521,7 +554,7 @@ interface SchoolDao {
     suspend fun getPendingAuditLogs(): List<AuditLogEntity>
 
     @Query("SELECT COUNT(*) FROM audit_logs WHERE syncStatus = 'PENDING_SYNC'")
-    fun getPendingSyncCount(): Flow<Int>
+    fun getPendingAuditSyncCount(): Flow<Int>
 
     @Query("SELECT * FROM audit_logs WHERE interactionType = :type ORDER BY timestamp DESC")
     fun getAuditLogsByInteractionType(type: String): Flow<List<AuditLogEntity>>
@@ -666,6 +699,211 @@ interface SchoolDao {
     ) {
         principalApproveIdCard(cardId, status, remarks, approvedBy)
         insertAuditLog(auditLog)
+    }
+
+    // --- Atomic Entity + Outbox Operations ---
+
+    @Transaction
+    suspend fun saveDailyAttendanceBatchWithOutbox(
+        classSection: String,
+        date: String,
+        attendances: List<AttendanceEntity>,
+        records: List<AttendanceRecordEntity>,
+        outboxItems: List<DurableOutboxEntity>
+    ) {
+        deleteAttendanceForClassAndDate(classSection.trim(), date.trim())
+        insertAttendanceList(attendances)
+        insertAttendanceRecords(records)
+        insertOutboxItems(outboxItems)
+    }
+
+    @Transaction
+    suspend fun insertAttendanceRecordWithOutbox(
+        record: AttendanceRecordEntity,
+        outboxItem: DurableOutboxEntity
+    ) {
+        insertAttendanceRecord(record)
+        insertOutbox(outboxItem)
+    }
+
+    @Transaction
+    suspend fun insertAttendanceRecordsWithOutbox(
+        records: List<AttendanceRecordEntity>,
+        outboxItems: List<DurableOutboxEntity>
+    ) {
+        insertAttendanceRecords(records)
+        insertOutboxItems(outboxItems)
+    }
+
+    @Transaction
+    suspend fun commitRegisterScanWithOutbox(
+        batch: RegisterScanBatchEntity,
+        records: List<AttendanceRecordEntity>,
+        outboxItems: List<DurableOutboxEntity>
+    ) {
+        insertRegisterBatch(batch)
+        insertAttendanceRecords(records)
+        insertOutboxItems(outboxItems)
+    }
+
+    @Transaction
+    suspend fun inchargeVerifyBatchWithOutbox(
+        batchId: String,
+        auditLog: AuditLogEntity?,
+        outboxItem: DurableOutboxEntity
+    ) {
+        verifyBatchByIncharge(batchId)
+        auditLog?.let { insertAuditLog(it) }
+        insertOutbox(outboxItem)
+    }
+
+    @Transaction
+    suspend fun principalApproveBatchWithOutbox(
+        batchId: String,
+        auditLog: AuditLogEntity?,
+        outboxItem: DurableOutboxEntity
+    ) {
+        approveBatchByPrincipal(batchId)
+        auditLog?.let { insertAuditLog(it) }
+        insertOutbox(outboxItem)
+    }
+
+    @Transaction
+    suspend fun insertExamRecordWithOutbox(
+        examRecord: ExamRecordEntity,
+        outboxItem: DurableOutboxEntity
+    ) {
+        insertExamRecord(examRecord)
+        insertOutbox(outboxItem)
+    }
+
+    @Transaction
+    suspend fun insertExamRecordsWithOutbox(
+        records: List<ExamRecordEntity>,
+        outboxItems: List<DurableOutboxEntity>
+    ) {
+        insertExamRecords(records)
+        insertOutboxItems(outboxItems)
+    }
+
+    @Transaction
+    suspend fun recordFeePaymentWithOutbox(
+        feeId: String,
+        paid: Long,
+        due: Long,
+        status: String,
+        receipt: String,
+        date: String,
+        mode: String,
+        outboxItem: DurableOutboxEntity
+    ) {
+        recordFeePayment(feeId, paid, due, status, receipt, date, mode)
+        insertOutbox(outboxItem)
+    }
+
+    @Transaction
+    suspend fun insertFeeRecordWithOutbox(
+        fee: FeeRecordEntity,
+        outboxItem: DurableOutboxEntity
+    ) {
+        insertFeeRecord(fee)
+        insertOutbox(outboxItem)
+    }
+
+    @Transaction
+    suspend fun insertStudentWithOutbox(
+        student: StudentEntity,
+        outboxItem: DurableOutboxEntity
+    ) {
+        insertStudent(student)
+        insertOutbox(outboxItem)
+    }
+
+    @Transaction
+    suspend fun insertAdmissionApplicationWithOutbox(
+        app: AdmissionApplicationEntity,
+        outboxItem: DurableOutboxEntity
+    ) {
+        insertAdmissionApplication(app)
+        insertOutbox(outboxItem)
+    }
+
+    @Transaction
+    suspend fun enrollStudentFromAdmissionWithOutbox(
+        app: AdmissionApplicationEntity,
+        student: StudentEntity,
+        outboxItems: List<DurableOutboxEntity>
+    ) {
+        insertStudent(student)
+        updateAdmissionApplication(app)
+        insertOutboxItems(outboxItems)
+    }
+
+    @Transaction
+    suspend fun insertCertificateWithOutbox(
+        certificate: CertificateEntity,
+        outboxItem: DurableOutboxEntity
+    ) {
+        insertCertificate(certificate)
+        insertOutbox(outboxItem)
+    }
+
+    @Transaction
+    suspend fun inchargeVerifyCertificateWithOutbox(
+        certId: String,
+        status: String,
+        incharge: String,
+        remarks: String,
+        outboxItem: DurableOutboxEntity
+    ) {
+        inchargeVerifyCertificate(certId, status, incharge, remarks)
+        insertOutbox(outboxItem)
+    }
+
+    @Transaction
+    suspend fun principalApproveCertificateWithOutbox(
+        certId: String,
+        status: String,
+        principal: String,
+        remarks: String,
+        unlocked: Boolean,
+        token: String,
+        outboxItem: DurableOutboxEntity
+    ) {
+        principalApproveCertificate(certId, status, principal, remarks, unlocked, token)
+        insertOutbox(outboxItem)
+    }
+
+    @Transaction
+    suspend fun saveIdCardWithOutbox(
+        idCard: IdCardRecordEntity,
+        outboxItem: DurableOutboxEntity
+    ) {
+        insertIdCard(idCard)
+        insertOutbox(outboxItem)
+    }
+
+    @Transaction
+    suspend fun inchargeVerifyIdCardWithOutbox(
+        cardId: String,
+        status: String,
+        remarks: String,
+        outboxItem: DurableOutboxEntity
+    ) {
+        inchargeVerifyIdCard(cardId, status, remarks)
+        insertOutbox(outboxItem)
+    }
+
+    @Transaction
+    suspend fun principalApproveIdCardWithOutbox(
+        cardId: String,
+        status: String,
+        remarks: String,
+        approvedBy: String,
+        outboxItem: DurableOutboxEntity
+    ) {
+        principalApproveIdCard(cardId, status, remarks, approvedBy)
+        insertOutbox(outboxItem)
     }
 
     // =========================================================================
@@ -824,6 +1062,30 @@ interface SchoolDao {
     // =========================================================================
     // 26. ATOMIC TRANSACTION WORKFLOWS
     // =========================================================================
+    @Transaction
+    suspend fun processFeePaymentAtomicWithOutbox(
+        feeId: String,
+        transaction: FeePaymentTransactionEntity,
+        paidPaise: Long,
+        duePaise: Long,
+        status: String,
+        auditLog: AuditLogEntity,
+        outboxItem: DurableOutboxEntity
+    ) {
+        insertPaymentTransaction(transaction)
+        recordFeePayment(
+            feeId = feeId,
+            paid = paidPaise,
+            due = duePaise,
+            status = status,
+            receipt = transaction.receiptNumber,
+            date = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date(transaction.timestamp)),
+            mode = transaction.paymentMode
+        )
+        insertAuditLog(auditLog)
+        insertOutbox(outboxItem)
+    }
+
     @Transaction
     suspend fun processFeePaymentAtomic(
         feeId: String,
@@ -1077,16 +1339,16 @@ interface SchoolDao {
     // =========================================================================
     // 39. ENTERPRISE DURABLE OUTBOX QUEUE
     // =========================================================================
-    @Query("SELECT * FROM durable_outbox WHERE institutionId = :institutionId AND (status = 'PENDING' OR status = 'FAILED' OR status = 'IN_FLIGHT') ORDER BY createdAt ASC")
+    @Query("SELECT * FROM durable_outbox WHERE institutionId = :institutionId AND (status = 'PENDING' OR status = 'FAILED' OR status = 'IN_FLIGHT' OR status = 'PROCESSING' OR status = 'RETRYABLE_FAILURE' OR status = 'PERMANENT_FAILURE' OR status = 'CONFLICT') ORDER BY createdAt ASC")
     fun getPendingOutbox(institutionId: String): Flow<List<DurableOutboxEntity>>
 
-    @Query("SELECT * FROM durable_outbox WHERE institutionId = :institutionId AND status = 'PENDING' AND nextAttemptAt <= :now ORDER BY createdAt ASC LIMIT :limit")
+    @Query("SELECT * FROM durable_outbox WHERE institutionId = :institutionId AND (status = 'PENDING' OR status = 'RETRYABLE_FAILURE' OR status = 'FAILED') AND nextAttemptAt <= :now ORDER BY createdAt ASC LIMIT :limit")
     suspend fun getReadyOutboxItems(institutionId: String, now: Long, limit: Int = 50): List<DurableOutboxEntity>
 
     @Query("SELECT * FROM durable_outbox WHERE idempotencyKey = :key LIMIT 1")
     suspend fun getOutboxByIdempotencyKey(key: String): DurableOutboxEntity?
 
-    @Query("SELECT COUNT(*) FROM durable_outbox WHERE institutionId = :institutionId AND (status = 'PENDING' OR status = 'FAILED')")
+    @Query("SELECT COUNT(*) FROM durable_outbox WHERE institutionId = :institutionId AND (status = 'PENDING' OR status = 'FAILED' OR status = 'RETRYABLE_FAILURE' OR status = 'PROCESSING')")
     fun getPendingOutboxCount(institutionId: String): Flow<Int>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -1098,8 +1360,14 @@ interface SchoolDao {
     @Update
     suspend fun updateOutbox(item: DurableOutboxEntity)
 
-    @Query("UPDATE durable_outbox SET status = 'ACKNOWLEDGED', serverAckToken = :ackToken, serverAckTimestamp = :ackTimestamp WHERE outboxId = :outboxId")
+    @Query("UPDATE durable_outbox SET status = 'PROCESSING', lastAttemptAt = :attemptTime WHERE outboxId = :outboxId")
+    suspend fun markOutboxItemProcessing(outboxId: String, attemptTime: Long)
+
+    @Query("UPDATE durable_outbox SET status = 'ACKNOWLEDGED', serverAckToken = :ackToken, serverAckTimestamp = :ackTimestamp, errorMessage = null WHERE outboxId = :outboxId")
     suspend fun acknowledgeOutboxItem(outboxId: String, ackToken: String, ackTimestamp: Long)
+
+    @Query("UPDATE durable_outbox SET status = :status, errorMessage = :error, retryCount = :retryCount, nextAttemptAt = :nextAttempt, lastAttemptAt = :lastAttempt WHERE outboxId = :outboxId")
+    suspend fun markOutboxItemFailedWithStatus(outboxId: String, status: String, error: String, retryCount: Int, nextAttempt: Long, lastAttempt: Long)
 
     @Query("UPDATE durable_outbox SET status = 'FAILED', errorMessage = :error, retryCount = :retryCount, nextAttemptAt = :nextAttempt, lastAttemptAt = :lastAttempt WHERE outboxId = :outboxId")
     suspend fun markOutboxItemFailed(outboxId: String, error: String, retryCount: Int, nextAttempt: Long, lastAttempt: Long)

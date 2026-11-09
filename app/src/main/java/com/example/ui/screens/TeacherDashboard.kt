@@ -22,7 +22,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Assignment
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -35,6 +37,7 @@ import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -59,16 +62,22 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.core.FeatureAvailability
 import com.example.data.local.entities.IdCardRecordEntity
 import com.example.data.local.entities.SchoolDiaryEntity
 import com.example.data.local.entities.StudentEntity
 import com.example.ui.components.AiAcademicToolsSection
 import com.example.ui.components.DailyAttendanceRecorder
+import com.example.ui.components.DynamicTimetablePeriodTracker
+import com.example.ui.components.GeminiAiExamBuilderModal
+import com.example.ui.components.GeminiAiPredictiveAnalyticsDeck
 import com.example.ui.components.GlassBadge
 import com.example.ui.components.GlassButton
 import com.example.ui.components.GlassCard
 import com.example.ui.components.GlassOutlinedButton
 import com.example.ui.components.GlassTextField
+import com.example.ui.components.ParentTeacherMessagingSystem
+import com.example.ui.components.QrAndGeofencedAttendanceSystem
 import com.example.ui.theme.GlassBorderLight
 import com.example.ui.theme.GovBorderGrey
 import com.example.ui.theme.GovGreen
@@ -126,6 +135,9 @@ fun TeacherDashboard(
     // Dialog for Student Real Photo ID Capture
     var photoStudent by remember { mutableStateOf<StudentEntity?>(null) }
 
+    // Modal Dialog for Gemini AI Exam Builder
+    var showAiExamBuilderModal by remember { mutableStateOf(false) }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -171,37 +183,47 @@ fun TeacherDashboard(
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // Fast Action Ribbon
+        // Fast Action Ribbon with AI Exam Builder
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             GlassButton(
-                text = "Daily Roll Call",
+                text = "Roll Call",
                 onClick = { selectedTab = 0 },
                 color = GovNavyPrimary,
                 leadingIcon = {
-                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = PureWhite, modifier = Modifier.size(15.dp))
+                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = PureWhite, modifier = Modifier.size(14.dp))
                 },
                 modifier = Modifier.weight(1f)
             )
 
             GlassButton(
-                text = "Camera Scan",
+                text = "QR Scan",
                 onClick = onNavigateToScanScreen,
                 color = Color(0xFF0284C7),
                 leadingIcon = {
-                    Icon(Icons.Default.CameraAlt, contentDescription = null, tint = PureWhite, modifier = Modifier.size(15.dp))
+                    Icon(Icons.Default.CameraAlt, contentDescription = null, tint = PureWhite, modifier = Modifier.size(14.dp))
                 },
                 modifier = Modifier.weight(1f)
             )
 
             GlassButton(
-                text = "Post Homework",
+                text = "Homework",
                 onClick = { showDiaryDialog = true },
                 color = GovGreen,
                 leadingIcon = {
-                    Icon(Icons.Default.EventNote, contentDescription = null, tint = PureWhite, modifier = Modifier.size(15.dp))
+                    Icon(Icons.Default.EventNote, contentDescription = null, tint = PureWhite, modifier = Modifier.size(14.dp))
+                },
+                modifier = Modifier.weight(1f)
+            )
+
+            GlassButton(
+                text = "AI Exam",
+                onClick = { showAiExamBuilderModal = true },
+                color = Color(0xFF7C3AED),
+                leadingIcon = {
+                    Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = PureWhite, modifier = Modifier.size(14.dp))
                 },
                 modifier = Modifier.weight(1f)
             )
@@ -209,16 +231,17 @@ fun TeacherDashboard(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Segmented Tabs
+        // Segmented Tabs with Smooth Scrolling
         Surface(
             shape = RoundedCornerShape(8.dp),
             color = PureWhite,
             border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorderLight),
             modifier = Modifier.fillMaxWidth()
         ) {
-            TabRow(
+            ScrollableTabRow(
                 selectedTabIndex = selectedTab,
                 containerColor = PureWhite,
+                edgePadding = 6.dp,
                 indicator = { tabPositions ->
                     TabRowDefaults.Indicator(
                         modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
@@ -230,7 +253,7 @@ fun TeacherDashboard(
                 Tab(
                     selected = selectedTab == 0,
                     onClick = { selectedTab = 0 },
-                    text = { Text("Daily Attendance", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
+                    text = { Text("Attendance & QR", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
                 )
                 Tab(
                     selected = selectedTab == 1,
@@ -245,12 +268,17 @@ fun TeacherDashboard(
                 Tab(
                     selected = selectedTab == 3,
                     onClick = { selectedTab = 3 },
-                    text = { Text("Timetable", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
+                    text = { Text("Live Timetable", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
                 )
                 Tab(
                     selected = selectedTab == 4,
                     onClick = { selectedTab = 4 },
-                    text = { Text("AI Academic Tools", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
+                    text = { Text("Gemini AI Suite", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
+                )
+                Tab(
+                    selected = selectedTab == 5,
+                    onClick = { selectedTab = 5 },
+                    text = { Text("Parent Messages", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
                 )
             }
         }
@@ -258,13 +286,17 @@ fun TeacherDashboard(
         Spacer(modifier = Modifier.height(14.dp))
 
         // =====================================================================
-        // TAB 0: DAILY ATTENDANCE (ROOM DATABASE PERSISTENCE)
+        // TAB 0: DAILY ATTENDANCE & QR/GEOFENCE PUNCH-IN
         // =====================================================================
         if (selectedTab == 0) {
-            DailyAttendanceRecorder(
-                viewModel = attendanceViewModel,
-                modifier = Modifier.fillMaxWidth()
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                QrAndGeofencedAttendanceSystem()
+
+                DailyAttendanceRecorder(
+                    viewModel = attendanceViewModel,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
         }
 
         // =====================================================================
@@ -429,65 +461,95 @@ fun TeacherDashboard(
         }
 
         // =====================================================================
-        // TAB 3: TIMETABLE
+        // TAB 3: DYNAMIC TIMETABLE & ACTIVE PERIOD TRACKER
         // =====================================================================
         if (selectedTab == 3) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = "Weekly Teaching Timetable (Science Division):",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = GovNavyDark
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                DynamicTimetablePeriodTracker(
+                    classSection = "10-A"
                 )
+            }
+        }
 
-                timetableSlots.forEach { slot ->
-                    GlassCard(
-                        modifier = Modifier.fillMaxWidth(),
-                        headerRibbonColor = GovNavyPrimary,
-                        headerTitle = "PERIOD ${slot.periodNumber} - ${slot.dayOfWeek.uppercase()}",
-                        headerBadge = slot.roomNumber
+        // =====================================================================
+        // TAB 4: AI ACADEMIC TOOLS & PREDICTIVE ANALYTICS (GEMINI CO-PILOT)
+        // =====================================================================
+        if (selectedTab == 4) {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                // Quick Launch AI Exam Builder Banner
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFFFAF5FF),
+                    border = androidx.compose.foundation.BorderStroke(1.2.dp, Color(0xFFC084FC)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Text(
-                                    text = slot.subject,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = GovSlateDark
-                                )
-                                Text(
-                                    text = "Class: ${slot.classSection} | Teacher: ${slot.teacherName}",
-                                    fontSize = 10.sp,
-                                    color = GovSlateMuted
-                                )
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFF7C3AED)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = PureWhite, modifier = Modifier.size(20.dp))
                             }
-                            Text(
-                                text = slot.timeRange,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = GovGreen,
-                                fontFamily = FontFamily.Monospace
-                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text("Gemini AI Exam & Quiz Builder", fontSize = 13.5.sp, fontWeight = FontWeight.Bold, color = Color(0xFF581C87))
+                                Text("Instantly draft CBSE question papers & rubrics for any topic", fontSize = 10.5.sp, color = GovSlateMuted)
+                            }
                         }
+
+                        GlassButton(
+                            text = "Draft Paper",
+                            onClick = { showAiExamBuilderModal = true },
+                            color = Color(0xFF7C3AED),
+                            leadingIcon = {
+                                Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = PureWhite, modifier = Modifier.size(13.dp))
+                            }
+                        )
                     }
+                }
+
+                if (FeatureAvailability.isAiAcademicToolsEnabled) {
+                    // Gemini AI Predictive Academic Risk Radar (<75% attendance / falling grades)
+                    GeminiAiPredictiveAnalyticsDeck(
+                        students = classStudents
+                    )
+
+                    // Standard AI Academic Tools (Circulars, Performance Remarks, Quiz Generator)
+                    AiAcademicToolsSection(
+                        viewModel = viewModel,
+                        userRole = "TEACHER",
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
             }
         }
 
         // =====================================================================
-        // TAB 4: AI ACADEMIC TOOLS (GEMINI CO-PILOT)
+        // TAB 5: IN-APP PARENT-TEACHER MESSAGING CHANNEL
         // =====================================================================
-        if (selectedTab == 4) {
-            AiAcademicToolsSection(
-                viewModel = viewModel,
-                userRole = "TEACHER",
-                modifier = Modifier.fillMaxWidth()
+        if (selectedTab == 5) {
+            ParentTeacherMessagingSystem(
+                parentName = "Aarav Sharma's Guardian",
+                inchargeName = "Dr. Meenakshi Sundaram (Faculty)"
             )
         }
+    }
+
+    // Modal Dialog: Gemini AI Exam Builder
+    if (showAiExamBuilderModal) {
+        GeminiAiExamBuilderModal(
+            onDismiss = { showAiExamBuilderModal = false }
+        )
     }
 
     // Marks Entry Dialog

@@ -4,7 +4,11 @@ import com.example.data.local.dao.SchoolDao
 import com.example.data.local.entities.AttendanceEntity
 import com.example.data.local.entities.AttendanceRecordEntity
 import com.example.data.local.entities.AuditLogEntity
+import com.example.data.local.entities.DurableOutboxEntity
 import com.example.data.local.entities.RegisterScanBatchEntity
+import com.example.data.remote.sync.ConflictResolutionPolicy
+import com.example.data.remote.sync.DurableOutboxManager
+import com.example.security.TenantSecurityContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -13,6 +17,12 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -57,8 +67,15 @@ interface AttendanceRepository {
 
 @Singleton
 class AttendanceRepositoryImpl @Inject constructor(
-    private val dao: SchoolDao
+    private val dao: SchoolDao,
+    private val outboxManager: DurableOutboxManager
 ) : AttendanceRepository {
+
+    constructor(dao: SchoolDao) : this(
+        dao = dao,
+        outboxManager = DurableOutboxManager(dao)
+    )
+
     private val externalScope: CoroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     override val allAttendance: Flow<List<AttendanceEntity>> = dao.getAllAttendance()
@@ -99,6 +116,28 @@ class AttendanceRepositoryImpl @Inject constructor(
     override fun observeRegisterBatches(): Flow<List<RegisterScanBatchEntity>> =
         dao.getAllRegisterBatches()
 
+    private fun resolveAuthenticatedTenant(preferredTenantId: String? = null): String {
+        val sessionTenant = TenantSecurityContext.getActiveTenantIdOrNull()
+            ?: com.example.security.SecureSessionManager.getActiveSession()?.institutionId
+
+        if (sessionTenant != null) {
+            // If the entity explicitly specified a foreign tenant (other than template default fallback "INST-SXA-2026"),
+            // prevent cross-tenant mutation. If it has the template default or matches, resolve to authenticated session.
+            if (preferredTenantId != null && preferredTenantId.isNotBlank() &&
+                preferredTenantId != "INST-SXA-2026" && preferredTenantId != sessionTenant) {
+                throw com.example.security.TenantSecurityException(
+                    "Tenant isolation violation: Active authenticated session belongs to '$sessionTenant', cannot perform mutation for tenant '$preferredTenantId'."
+                )
+            }
+            return sessionTenant
+        }
+
+        val fallback = preferredTenantId?.takeIf { it.isNotBlank() }
+        return fallback ?: throw com.example.security.TenantSecurityException(
+            "Unauthorized operation: Verified authenticated session required. No tenant context established."
+        )
+    }
+
     override suspend fun getAttendanceForClassAndDate(
         classSection: String,
         date: String
@@ -112,40 +151,77 @@ class AttendanceRepositoryImpl @Inject constructor(
         attendances: List<AttendanceEntity>,
         updateStudentPercentages: Boolean
     ) = withContext(Dispatchers.IO) {
-        // Delete previous records for the exact classSection and date to avoid duplicates
-        dao.deleteAttendanceForClassAndDate(classSection.trim(), date.trim())
-        // Insert new list
-        dao.insertAttendanceList(attendances)
+        val resolvedTenant = resolveAuthenticatedTenant(attendances.firstOrNull()?.institutionId)
 
-        // Also create mirrored AttendanceRecordEntity records for institutional sync & audit
-        val recordEntities = attendances.map { att ->
+        val tenantAttendances = attendances.map { att ->
+            if (att.institutionId != resolvedTenant) att.copy(institutionId = resolvedTenant) else att
+        }
+
+        // Prepare mirrored records with isSyncedToCentral = false (pending cloud sync)
+        val recordEntities = tenantAttendances.map { att ->
             AttendanceRecordEntity(
-                institutionId = att.institutionId,
+                institutionId = resolvedTenant,
                 personId = att.studentId,
                 personName = att.studentName,
                 roleType = "STUDENT",
                 date = att.date,
                 status = att.status,
-                timeMarked = java.text.SimpleDateFormat("hh:mm a", java.util.Locale.getDefault()).format(java.util.Date(att.dateTimestamp)),
+                timeMarked = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(att.dateTimestamp)),
                 remarks = att.remarks,
                 markedByRole = "TEACHER",
                 markedByName = "Faculty In-Charge",
                 classSection = att.classSection,
                 sessionType = att.session,
                 sourceMethod = "DAILY_ATTENDANCE_UI",
-                isSyncedToCentral = true
+                isSyncedToCentral = false
             )
         }
-        dao.insertAttendanceRecords(recordEntities)
+
+        // Prepare durable outbox mutation items for each attendance entry
+        val outboxItems = tenantAttendances.map { att ->
+            val payload = JSONObject().apply {
+                put("studentId", att.studentId)
+                put("studentName", att.studentName)
+                put("classSection", att.classSection)
+                put("date", att.date)
+                put("status", att.status)
+                put("session", att.session)
+                put("markedByTeacherId", att.markedByTeacherId)
+                put("remarks", att.remarks)
+                put("dateTimestamp", att.dateTimestamp)
+                put("institutionId", resolvedTenant)
+            }.toString()
+
+            val entityId = "${att.classSection.trim()}_${att.date.trim()}_${att.studentId.trim()}"
+            val idempotencyKey = "ATT-${resolvedTenant}-${entityId}"
+
+            outboxManager.createOutboxEntity(
+                entityType = "ATTENDANCE_RECORD",
+                entityId = entityId,
+                operation = "CREATE",
+                payloadJson = payload,
+                isHighIntegrity = true,
+                policy = ConflictResolutionPolicy.HIGH_INTEGRITY_MANUAL,
+                institutionId = resolvedTenant,
+                customIdempotencyKey = idempotencyKey
+            )
+        }
+
+        // Commit atomically to Room: deletion, batch insert, records, and outbox queue in one transaction
+        dao.saveDailyAttendanceBatchWithOutbox(
+            classSection = classSection.trim(),
+            date = date.trim(),
+            attendances = tenantAttendances,
+            records = recordEntities,
+            outboxItems = outboxItems
+        )
 
         if (updateStudentPercentages) {
-            // Update percentage for each student in students table if present
-            attendances.forEach { att ->
+            tenantAttendances.forEach { att ->
                 val student = dao.getStudentById(att.studentId)
                 if (student != null) {
                     val isPresentOrLate = att.status.equals("PRESENT", ignoreCase = true) || att.status.equals("LATE", ignoreCase = true)
                     val currentPct = student.attendancePercentage
-                    // Slight realistic adjustment towards 100 or 0
                     val updatedPct = if (isPresentOrLate) {
                         (currentPct * 0.95f + 100f * 0.05f).coerceIn(50f, 100f)
                     } else {
@@ -158,45 +234,255 @@ class AttendanceRepositoryImpl @Inject constructor(
     }
 
     override suspend fun recordAttendance(attendance: AttendanceEntity) = withContext(Dispatchers.IO) {
-        dao.insertAttendance(attendance)
+        saveDailyAttendanceBatch(attendance.classSection, attendance.date, listOf(attendance), false)
     }
 
     override suspend fun recordAttendanceBatch(attendances: List<AttendanceEntity>) = withContext(Dispatchers.IO) {
-        dao.insertAttendanceList(attendances)
+        val first = attendances.firstOrNull() ?: return@withContext
+        saveDailyAttendanceBatch(first.classSection, first.date, attendances, true)
     }
 
     override suspend fun insertAttendanceRecord(record: AttendanceRecordEntity) = withContext(Dispatchers.IO) {
-        dao.insertAttendanceRecord(record)
+        val resolvedTenant = resolveAuthenticatedTenant(record.institutionId)
+        val tenantRecord = record.copy(institutionId = resolvedTenant, isSyncedToCentral = false)
+
+        val payload = JSONObject().apply {
+            put("personId", tenantRecord.personId)
+            put("personName", tenantRecord.personName)
+            put("roleType", tenantRecord.roleType)
+            put("date", tenantRecord.date)
+            put("status", tenantRecord.status)
+            put("timeMarked", tenantRecord.timeMarked)
+            put("remarks", tenantRecord.remarks)
+            put("classSection", tenantRecord.classSection)
+            put("institutionId", resolvedTenant)
+        }.toString()
+
+        val entityId = "${tenantRecord.classSection.trim()}_${tenantRecord.date.trim()}_${tenantRecord.personId.trim()}"
+        val idempotencyKey = "REC-${resolvedTenant}-${entityId}"
+
+        val outboxItem = outboxManager.createOutboxEntity(
+            entityType = "ATTENDANCE_RECORD",
+            entityId = entityId,
+            operation = "CREATE",
+            payloadJson = payload,
+            isHighIntegrity = true,
+            policy = ConflictResolutionPolicy.HIGH_INTEGRITY_MANUAL,
+            institutionId = resolvedTenant,
+            customIdempotencyKey = idempotencyKey
+        )
+
+        dao.insertAttendanceRecordWithOutbox(tenantRecord, outboxItem)
     }
 
     override suspend fun insertAttendanceRecords(records: List<AttendanceRecordEntity>) = withContext(Dispatchers.IO) {
-        dao.insertAttendanceRecords(records)
+        if (records.isEmpty()) return@withContext
+        val resolvedTenant = resolveAuthenticatedTenant(records.firstOrNull()?.institutionId)
+        val tenantRecords = records.map { it.copy(institutionId = resolvedTenant, isSyncedToCentral = false) }
+
+        val outboxItems = tenantRecords.map { rec ->
+            val payload = JSONObject().apply {
+                put("personId", rec.personId)
+                put("personName", rec.personName)
+                put("roleType", rec.roleType)
+                put("date", rec.date)
+                put("status", rec.status)
+                put("timeMarked", rec.timeMarked)
+                put("remarks", rec.remarks)
+                put("classSection", rec.classSection)
+                put("institutionId", resolvedTenant)
+            }.toString()
+
+            val entityId = "${rec.classSection.trim()}_${rec.date.trim()}_${rec.personId.trim()}"
+            val idempotencyKey = "REC-${resolvedTenant}-${entityId}"
+
+            outboxManager.createOutboxEntity(
+                entityType = "ATTENDANCE_RECORD",
+                entityId = entityId,
+                operation = "CREATE",
+                payloadJson = payload,
+                isHighIntegrity = true,
+                policy = ConflictResolutionPolicy.HIGH_INTEGRITY_MANUAL,
+                institutionId = resolvedTenant,
+                customIdempotencyKey = idempotencyKey
+            )
+        }
+
+        dao.insertAttendanceRecordsWithOutbox(tenantRecords, outboxItems)
     }
 
     override suspend fun commitRegisterScan(
         batch: RegisterScanBatchEntity,
         records: List<AttendanceRecordEntity>
     ) = withContext(Dispatchers.IO) {
-        dao.insertRegisterBatch(batch)
-        dao.insertAttendanceRecords(records)
+        val resolvedTenant = resolveAuthenticatedTenant(batch.institutionId)
+
+        val tenantBatch = batch.copy(
+            institutionId = resolvedTenant,
+            inchargeVerified = false,
+            principalApproved = false,
+            status = "PENDING_VERIFICATION"
+        )
+        val tenantRecords = records.map { it.copy(institutionId = resolvedTenant, isSyncedToCentral = false) }
+
+        // 1. Outbox entry for the batch itself
+        val batchPayload = JSONObject().apply {
+            put("batchId", tenantBatch.batchId)
+            put("classSection", tenantBatch.classSection)
+            put("session", tenantBatch.session)
+            put("date", tenantBatch.date)
+            put("teacherName", tenantBatch.teacherName)
+            put("totalStudents", tenantBatch.totalStudents)
+            put("presentCount", tenantBatch.presentCount)
+            put("absentCount", tenantBatch.absentCount)
+            put("absentRolls", tenantBatch.absentRolls)
+            put("institutionId", resolvedTenant)
+            put("timestamp", tenantBatch.timestamp)
+        }.toString()
+
+        val batchOutboxItem = outboxManager.createOutboxEntity(
+            entityType = "REGISTER_SCAN_BATCH",
+            entityId = tenantBatch.batchId,
+            operation = "CREATE",
+            payloadJson = batchPayload,
+            isHighIntegrity = true,
+            policy = ConflictResolutionPolicy.HIGH_INTEGRITY_MANUAL,
+            institutionId = resolvedTenant,
+            customIdempotencyKey = "BATCH-${resolvedTenant}-${tenantBatch.batchId}"
+        )
+
+        // 2. Outbox entries for each individual scanned record
+        val recordOutboxItems = tenantRecords.map { rec ->
+            val payload = JSONObject().apply {
+                put("batchId", tenantBatch.batchId)
+                put("classSection", tenantBatch.classSection)
+                put("date", tenantBatch.date)
+                put("personId", rec.personId)
+                put("personName", rec.personName)
+                put("status", rec.status)
+                put("timeMarked", rec.timeMarked)
+                put("institutionId", resolvedTenant)
+            }.toString()
+
+            val entityId = "${tenantBatch.batchId}_${rec.personId}"
+            val idempotencyKey = "SCAN-${resolvedTenant}-${entityId}"
+
+            outboxManager.createOutboxEntity(
+                entityType = "ATTENDANCE_RECORD",
+                entityId = entityId,
+                operation = "CREATE",
+                payloadJson = payload,
+                isHighIntegrity = true,
+                policy = ConflictResolutionPolicy.HIGH_INTEGRITY_MANUAL,
+                institutionId = resolvedTenant,
+                customIdempotencyKey = idempotencyKey
+            )
+        }
+
+        val allOutboxItems = listOf(batchOutboxItem) + recordOutboxItems
+        dao.commitRegisterScanWithOutbox(tenantBatch, tenantRecords, allOutboxItems)
     }
 
     override suspend fun verifyBatchByIncharge(batchId: String) = withContext(Dispatchers.IO) {
-        dao.verifyBatchByIncharge(batchId)
+        val resolvedTenant = resolveAuthenticatedTenant()
+        val payload = JSONObject().apply {
+            put("batchId", batchId)
+            put("action", "VERIFIED_BY_INCHARGE")
+            put("institutionId", resolvedTenant)
+            put("timestamp", System.currentTimeMillis())
+        }.toString()
+
+        val outboxItem = outboxManager.createOutboxEntity(
+            entityType = "ATTENDANCE_BATCH_VERIFICATION",
+            entityId = batchId,
+            operation = "UPDATE",
+            payloadJson = payload,
+            isHighIntegrity = true,
+            policy = ConflictResolutionPolicy.HIGH_INTEGRITY_MANUAL,
+            institutionId = resolvedTenant,
+            customIdempotencyKey = "VERIFY-BATCH-${resolvedTenant}-${batchId}"
+        )
+
+        dao.inchargeVerifyBatchWithOutbox(batchId, null, outboxItem)
     }
 
     override suspend fun approveBatchByPrincipal(batchId: String) = withContext(Dispatchers.IO) {
-        dao.approveBatchByPrincipal(batchId)
+        val resolvedTenant = resolveAuthenticatedTenant()
+        val payload = JSONObject().apply {
+            put("batchId", batchId)
+            put("action", "APPROVED_BY_PRINCIPAL")
+            put("institutionId", resolvedTenant)
+            put("timestamp", System.currentTimeMillis())
+        }.toString()
+
+        val outboxItem = outboxManager.createOutboxEntity(
+            entityType = "ATTENDANCE_BATCH_APPROVAL",
+            entityId = batchId,
+            operation = "UPDATE",
+            payloadJson = payload,
+            isHighIntegrity = true,
+            policy = ConflictResolutionPolicy.HIGH_INTEGRITY_MANUAL,
+            institutionId = resolvedTenant,
+            customIdempotencyKey = "APPROVE-BATCH-${resolvedTenant}-${batchId}"
+        )
+
+        dao.principalApproveBatchWithOutbox(batchId, null, outboxItem)
     }
 
     override suspend fun inchargeVerifyBatchWithAudit(batchId: String, auditLog: AuditLogEntity) =
         withContext(Dispatchers.IO) {
-            dao.inchargeVerifyBatchWithAudit(batchId, auditLog)
+            val resolvedTenant = resolveAuthenticatedTenant(auditLog.institutionId)
+            val tenantAuditLog = auditLog.copy(institutionId = resolvedTenant)
+
+            val payload = JSONObject().apply {
+                put("batchId", batchId)
+                put("action", "VERIFIED_BY_INCHARGE")
+                put("actorUserId", tenantAuditLog.actorUserId)
+                put("actorName", tenantAuditLog.actorName)
+                put("institutionId", resolvedTenant)
+                put("timestamp", tenantAuditLog.timestamp)
+            }.toString()
+
+            val outboxItem = outboxManager.createOutboxEntity(
+                entityType = "ATTENDANCE_BATCH_VERIFICATION",
+                entityId = batchId,
+                operation = "UPDATE",
+                payloadJson = payload,
+                isHighIntegrity = true,
+                policy = ConflictResolutionPolicy.HIGH_INTEGRITY_MANUAL,
+                institutionId = resolvedTenant,
+                customIdempotencyKey = "VERIFY-BATCH-${resolvedTenant}-${batchId}"
+            )
+
+            dao.inchargeVerifyBatchWithOutbox(batchId, tenantAuditLog, outboxItem)
         }
 
     override suspend fun principalApproveBatchWithAudit(batchId: String, auditLog: AuditLogEntity) =
         withContext(Dispatchers.IO) {
-            dao.principalApproveBatchWithAudit(batchId, auditLog)
+            val resolvedTenant = resolveAuthenticatedTenant(auditLog.institutionId)
+            val tenantAuditLog = auditLog.copy(institutionId = resolvedTenant)
+
+            val payload = JSONObject().apply {
+                put("batchId", batchId)
+                put("action", "APPROVED_BY_PRINCIPAL")
+                put("actorUserId", tenantAuditLog.actorUserId)
+                put("actorName", tenantAuditLog.actorName)
+                put("institutionId", resolvedTenant)
+                put("timestamp", tenantAuditLog.timestamp)
+            }.toString()
+
+            val outboxItem = outboxManager.createOutboxEntity(
+                entityType = "ATTENDANCE_BATCH_APPROVAL",
+                entityId = batchId,
+                operation = "UPDATE",
+                payloadJson = payload,
+                isHighIntegrity = true,
+                policy = ConflictResolutionPolicy.HIGH_INTEGRITY_MANUAL,
+                institutionId = resolvedTenant,
+                customIdempotencyKey = "APPROVE-BATCH-${resolvedTenant}-${batchId}"
+            )
+
+            dao.principalApproveBatchWithOutbox(batchId, tenantAuditLog, outboxItem)
         }
 
     override suspend fun applyBatchAttendanceAndSyncRoster(
@@ -204,6 +490,9 @@ class AttendanceRepositoryImpl @Inject constructor(
         records: List<AttendanceRecordEntity>,
         percentageUpdates: Map<String, Float>
     ) = withContext(Dispatchers.IO) {
-        dao.applyBatchAttendanceAndSyncRoster(batch, records, percentageUpdates)
+        commitRegisterScan(batch, records)
+        percentageUpdates.forEach { (studentId, pct) ->
+            dao.updateStudentAttendancePercentage(studentId, pct)
+        }
     }
 }

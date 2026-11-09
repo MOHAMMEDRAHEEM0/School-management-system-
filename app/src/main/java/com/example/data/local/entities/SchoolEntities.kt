@@ -57,13 +57,13 @@ data class UserEntity(
     val institutionId: String = "INST-SXA-2026",
     val username: String,
     val email: String,
-    val password: String = "Password@123",
-    val passwordSalt: String = "sxa_salt_2026",
+    val password: String = "",
+    val passwordSalt: String = "",
     val passwordHash: String = "",
     val role: String, // ADMIN, PRINCIPAL, VICE_PRINCIPAL, INCHARGE, STAFF_MANAGER, TEACHER, TEACHING, ACCOUNTANT, OFFICE, STUDENT, PARENT, NON_TEACHING, LIBRARIAN, TRANSPORT_STAFF
     val displayName: String,
-    val phoneNumber: String = "+91 98111 22334",
-    val authPin: String = "1234",
+    val phoneNumber: String = "",
+    val authPin: String = "",
     val isOtpVerified: Boolean = true,
     val isActive: Boolean = true,
     val isAccountDisabled: Boolean = false,
@@ -1145,13 +1145,25 @@ data class DurableOutboxEntity(
     val nextAttemptAt: Long = 0L,
     val retryCount: Int = 0,
     val maxRetries: Int = 5,
-    val status: String = "PENDING", // "PENDING", "IN_FLIGHT", "ACKNOWLEDGED", "FAILED", "CONFLICT"
+    val status: String = STATUS_PENDING,
+    val payloadVersion: Int = 1,
     val serverAckToken: String? = null,
     val serverAckTimestamp: Long? = null,
     val conflictResolutionPolicy: String = "LAST_WRITE_WINS", // "SERVER_WINS", "CLIENT_WINS", "LAST_WRITE_WINS", "HIGH_INTEGRITY_MANUAL"
     val isHighIntegrity: Boolean = false, // true for financial, marks, and attendance
     val errorMessage: String? = null
-)
+) {
+    companion object {
+        const val STATUS_PENDING = "PENDING"
+        const val STATUS_PROCESSING = "PROCESSING"
+        const val STATUS_IN_FLIGHT = "IN_FLIGHT"
+        const val STATUS_ACKNOWLEDGED = "ACKNOWLEDGED"
+        const val STATUS_RETRYABLE_FAILURE = "RETRYABLE_FAILURE"
+        const val STATUS_PERMANENT_FAILURE = "PERMANENT_FAILURE"
+        const val STATUS_FAILED = "FAILED"
+        const val STATUS_CONFLICT = "CONFLICT"
+    }
+}
 
 // =========================================================================
 // 41. SECURE CLOUD DOCUMENT STORAGE (TENANT-SCOPED VAULT)

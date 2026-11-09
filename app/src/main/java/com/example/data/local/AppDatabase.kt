@@ -159,6 +159,16 @@ abstract class AppDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
+        val MIGRATION_9_10 = object : androidx.room.migration.Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_users_institutionId` ON `users` (`institutionId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_students_institutionId` ON `students` (`institutionId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_staff_members_institutionId` ON `staff_members` (`institutionId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_attendance_institutionId` ON `attendance` (`institutionId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_durable_outbox_institutionId` ON `durable_outbox` (`institutionId`)")
+            }
+        }
+
         fun getDatabase(
             context: Context,
             scope: CoroutineScope = CoroutineScope(Dispatchers.IO)
@@ -169,7 +179,8 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "st_xaviers_sms_master.db"
                 )
-                    .fallbackToDestructiveMigration()
+                    .addMigrations(MIGRATION_9_10)
+                    .fallbackToDestructiveMigrationOnDowngrade()
                     .addCallback(DatabaseCallback(scope))
                     .build()
                 INSTANCE = instance
@@ -201,7 +212,7 @@ abstract class AppDatabase : RoomDatabase() {
                         registrationCode = "3477",
                         name = "St. Xavier's International Academy",
                         motto = "Excellence in Truth & Service",
-                        affiliationCode = "CBSE Affil: 1130492 | ISO 9001:2026",
+                        affiliationCode = "CBSE Affil: 1130492 | Autonomous School",
                         address = "Campus Road, Civil Lines, Sector 5",
                         cityCampus = "Trimurtinagar, Ahmednagar & Sector 5",
                         contactPhone = "+91 98111 22334",
@@ -359,146 +370,6 @@ abstract class AppDatabase : RoomDatabase() {
                     }
                 }
                 dao.insertAcademicClasses(academicClasses)
-
-                // 3. Pre-fed Core RBAC Users
-                val initialUsers = listOf(
-                    UserEntity(
-                        id = "USR-ADM-01",
-                        institutionId = "INST-SXA-2026",
-                        username = "admin",
-                        email = "admin@stxaviers.edu",
-                        password = "Password@123",
-                        role = "ADMIN",
-                        displayName = "System Administrator (Directorate)",
-                        phoneNumber = "9800000000",
-                        authPin = "9876",
-                        isOtpVerified = true,
-                        permissions = "MANAGE_INSTITUTION,CONFIGURE_ACADEMIC_YEAR,MANAGE_CLASSES,MANAGE_STAFF_DBMS,ASSIGN_TEACHERS,VIEW_ROSTER_ALL,VIEW_AUDIT_LOGS"
-                    ),
-                    UserEntity(
-                        id = "USR-TCH-DEMO",
-                        institutionId = "INST-SXA-2026",
-                        username = "teacher",
-                        email = "teacher@stxaviers.edu",
-                        password = "Password@123",
-                        role = "TEACHER",
-                        displayName = "Mrs. Sunita Kapoor (Faculty & Class In-Charge)",
-                        phoneNumber = "9876543212",
-                        authPin = "1234",
-                        isOtpVerified = true,
-                        permissions = "VIEW_ROSTER_SECTION,MARK_ATTENDANCE_SECTION,SCAN_REGISTER_CAMERA,ENTER_MARKS_ASSIGNED_SUBJECT,WRITE_CLASS_DIARY"
-                    ),
-                    UserEntity(
-                        id = "USR-STU-DEMO",
-                        institutionId = "INST-SXA-2026",
-                        username = "student",
-                        email = "student@stxaviers.edu",
-                        password = "Password@123",
-                        role = "STUDENT",
-                        displayName = "Aarav Sharma (Scholar Roll #1)",
-                        phoneNumber = "9123456781",
-                        authPin = "1234",
-                        isOtpVerified = true,
-                        permissions = "READ_DIARY,VIEW_TIMETABLE_ASSIGNED"
-                    ),
-                    UserEntity(
-                        id = "USR-SADM-01",
-                        institutionId = "INST-SXA-2026",
-                        username = "super_admin",
-                        email = "superadmin@stxaviers.edu",
-                        password = "Password@123",
-                        role = "PRINCIPAL",
-                        displayName = "Executive Trust Directorate (Super Admin)",
-                        phoneNumber = "9800000001",
-                        authPin = "9876",
-                        isOtpVerified = true
-                    ),
-                    UserEntity(
-                        id = "USR-PRIN-01",
-                        institutionId = "INST-SXA-2026",
-                        username = "principal",
-                        email = "principal@stxaviers.edu",
-                        password = "Password@123",
-                        role = "PRINCIPAL",
-                        displayName = "Prof. Robert Vance, Ph.D. (Principal)",
-                        phoneNumber = "9811122334",
-                        authPin = "9876",
-                        isOtpVerified = true
-                    ),
-                    UserEntity(
-                        id = "USR-INCH-01",
-                        institutionId = "INST-SXA-2026",
-                        username = "incharge_10a",
-                        email = "sunita.kapoor@stxaviers.edu",
-                        password = "Password@123",
-                        role = "INCHARGE",
-                        displayName = "Mrs. Sunita Kapoor (Class In-Charge 10-A)",
-                        phoneNumber = "9876543211",
-                        authPin = "1234",
-                        isOtpVerified = true
-                    ),
-                    UserEntity(
-                        id = "USR-TCH-01",
-                        institutionId = "INST-SXA-2026",
-                        username = "faculty_meenakshi",
-                        email = "m.sundaram@stxaviers.edu",
-                        password = "Password@123",
-                        role = "TEACHING",
-                        displayName = "Dr. Meenakshi Sundaram (Physics Faculty)",
-                        phoneNumber = "9876543210",
-                        authPin = "1234",
-                        isOtpVerified = true
-                    ),
-                    UserEntity(
-                        id = "USR-STU-01",
-                        institutionId = "INST-SXA-2026",
-                        username = "aarav_sharma",
-                        email = "aarav.sharma@stxaviers.edu",
-                        password = "Password@123",
-                        role = "STUDENT",
-                        displayName = "Aarav Sharma (Scholar Roll #1)",
-                        phoneNumber = "9123456780",
-                        authPin = "1234",
-                        isOtpVerified = true
-                    ),
-                    UserEntity(
-                        id = "USR-PAR-01",
-                        institutionId = "INST-SXA-2026",
-                        username = "vikram_sharma",
-                        email = "vikram.sharma@stxaviers.edu",
-                        password = "Password@123",
-                        role = "PARENT",
-                        displayName = "Vikram Sharma (Parent of Aarav)",
-                        phoneNumber = "9123456780",
-                        authPin = "1234",
-                        isOtpVerified = true
-                    ),
-                    UserEntity(
-                        id = "USR-ACC-01",
-                        institutionId = "INST-SXA-2026",
-                        username = "accountant_mehta",
-                        email = "accounts@stxaviers.edu",
-                        password = "Password@123",
-                        role = "ACCOUNTANT",
-                        displayName = "Suresh Mehta (Accounts & Bursar)",
-                        phoneNumber = "9844455667",
-                        authPin = "1234",
-                        isOtpVerified = true
-                    ),
-                    UserEntity(
-                        id = "USR-OFF-01",
-                        institutionId = "INST-SXA-2026",
-                        username = "office_admin",
-                        email = "documentation@stxaviers.edu",
-                        password = "Password@123",
-                        role = "OFFICE",
-                        displayName = "Rajesh Verma (Documentation Officer)",
-                        phoneNumber = "9833322110",
-                        authPin = "1234",
-                        isOtpVerified = true
-                    )
-                )
-                dao.insertUsers(initialUsers)
 
                 // 4. Pre-fed Faculty & Staff Members (Each with Unique Phone Number)
                 val initialStaff = listOf(
@@ -1375,6 +1246,83 @@ abstract class AppDatabase : RoomDatabase() {
                     )
                 )
                 dao.insertNotifications(initialNotifications)
+
+                // 22. Seeded Institutional Users for Secure Multi-Role Authentication
+                val initialUsers = listOf(
+                    UserEntity(
+                        id = "FAC-PRIN-01",
+                        institutionId = "INST-SXA-2026",
+                        username = "principal",
+                        email = "principal@stxaviers.edu",
+                        password = "",
+                        passwordSalt = "sxa_salt_prin_2026",
+                        passwordHash = com.example.security.SecurityUtils.hashPasswordPBKDF2("Password@123", "sxa_salt_prin_2026"),
+                        role = "PRINCIPAL",
+                        displayName = "Prof. Robert Vance, Ph.D.",
+                        phoneNumber = "9811122334"
+                    ),
+                    UserEntity(
+                        id = "FAC-TCH-02",
+                        institutionId = "INST-SXA-2026",
+                        username = "incharge_10a",
+                        email = "sunita.kapoor@stxaviers.edu",
+                        password = "",
+                        passwordSalt = "sxa_salt_inch_2026",
+                        passwordHash = com.example.security.SecurityUtils.hashPasswordPBKDF2("Password@123", "sxa_salt_inch_2026"),
+                        role = "INCHARGE",
+                        displayName = "Mrs. Sunita Kapoor (Class Incharge)",
+                        phoneNumber = "9876543211"
+                    ),
+                    UserEntity(
+                        id = "FAC-TCH-01",
+                        institutionId = "INST-SXA-2026",
+                        username = "faculty_meenakshi",
+                        email = "m.sundaram@stxaviers.edu",
+                        password = "",
+                        passwordSalt = "sxa_salt_tch_2026",
+                        passwordHash = com.example.security.SecurityUtils.hashPasswordPBKDF2("Password@123", "sxa_salt_tch_2026"),
+                        role = "TEACHER",
+                        displayName = "Dr. Meenakshi Sundaram",
+                        phoneNumber = "9876543210"
+                    ),
+                    UserEntity(
+                        id = "ADM-2026-001",
+                        institutionId = "INST-SXA-2026",
+                        username = "aarav_sharma",
+                        email = "aarav.sharma@stxaviers.edu",
+                        password = "",
+                        passwordSalt = "sxa_salt_stu_2026",
+                        passwordHash = com.example.security.SecurityUtils.hashPasswordPBKDF2("Password@123", "sxa_salt_stu_2026"),
+                        role = "STUDENT",
+                        displayName = "Aarav Sharma",
+                        phoneNumber = "9123456780"
+                    ),
+                    UserEntity(
+                        id = "USR-PAR-01",
+                        institutionId = "INST-SXA-2026",
+                        username = "vikram_sharma",
+                        email = "vikram.sharma@stxaviers.edu",
+                        password = "",
+                        passwordSalt = "sxa_salt_par_2026",
+                        passwordHash = com.example.security.SecurityUtils.hashPasswordPBKDF2("Password@123", "sxa_salt_par_2026"),
+                        role = "PARENT",
+                        displayName = "Vikram Sharma (Parent)",
+                        phoneNumber = "+91 91234 56780"
+                    ),
+                    UserEntity(
+                        id = "USR-ACC-01",
+                        institutionId = "INST-SXA-2026",
+                        username = "accountant_mehta",
+                        email = "accountant@stxaviers.edu",
+                        password = "",
+                        passwordSalt = "sxa_salt_acc_2026",
+                        passwordHash = com.example.security.SecurityUtils.hashPasswordPBKDF2("Password@123", "sxa_salt_acc_2026"),
+                        role = "ACCOUNTANT",
+                        displayName = "Rajesh Mehta (Senior Accounts Officer)",
+                        phoneNumber = "9811199887"
+                    )
+                )
+                dao.insertUsers(initialUsers)
             }
         }
     }

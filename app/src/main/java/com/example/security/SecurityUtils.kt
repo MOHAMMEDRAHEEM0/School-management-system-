@@ -11,6 +11,9 @@ import java.util.UUID
 
 class TenantSecurityException(message: String) : SecurityException(message)
 class RoleAuthorizationException(message: String, val requiredRole: String? = null) : SecurityException(message)
+class OfflineAuthenticationException(message: String) : java.io.IOException(message)
+class InvalidCredentialsException(message: String) : SecurityException(message)
+class FirebaseConfigurationException(message: String) : IllegalStateException(message)
 
 object SecurityUtils {
 
@@ -20,10 +23,20 @@ object SecurityUtils {
     private const val PBKDF2_KEY_LENGTH = 256 // in bits
 
     /**
+     * Generates a cryptographically strong pseudo-random salt using SecureRandom.
+     */
+    fun generateSecureSalt(): String {
+        val random = java.security.SecureRandom()
+        val saltBytes = ByteArray(16)
+        random.nextBytes(saltBytes)
+        return saltBytes.joinToString("") { "%02x".format(it) }
+    }
+
+    /**
      * Computes a NIST-compliant PBKDF2WithHmacSHA256 key derivation hash with 65,536 iterations
      * and cryptographic salt to prevent dictionary and rainbow table attacks.
      */
-    fun hashPasswordPBKDF2(password: String, salt: String = "sxa_salt_2026"): String {
+    fun hashPasswordPBKDF2(password: String, salt: String = generateSecureSalt()): String {
         val saltBytes = "$DEFAULT_SALT_PREFIX$salt".toByteArray(Charsets.UTF_8)
         val spec = javax.crypto.spec.PBEKeySpec(password.toCharArray(), saltBytes, PBKDF2_ITERATIONS, PBKDF2_KEY_LENGTH)
         val factory = javax.crypto.SecretKeyFactory.getInstance(PBKDF2_ALGORITHM)
@@ -34,14 +47,14 @@ object SecurityUtils {
     /**
      * Primary secure password hashing function using PBKDF2 key derivation.
      */
-    fun hashPassword(password: String, salt: String = "sxa_salt_2026"): String {
+    fun hashPassword(password: String, salt: String = generateSecureSalt()): String {
         return hashPasswordPBKDF2(password, salt)
     }
 
     /**
      * Legacy SHA-256 helper retained strictly for transparent migration of existing accounts.
      */
-    fun hashPasswordLegacySha256(password: String, salt: String = "sxa_salt_2026"): String {
+    fun hashPasswordLegacySha256(password: String, salt: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
         val combined = "$DEFAULT_SALT_PREFIX$salt:$password:$salt"
         val hashBytes = digest.digest(combined.toByteArray(Charsets.UTF_8))
@@ -49,29 +62,26 @@ object SecurityUtils {
     }
 
     /**
-     * Verifies raw password against stored hash using constant-time comparison to prevent timing attacks.
+     * Verifies raw password against stored cryptographic hash using constant-time comparison to prevent timing attacks.
      * Supports both modern PBKDF2 format and legacy salted SHA-256 for backward compatibility.
+     * Plaintext password fallbacks are strictly prohibited and will never authenticate.
      */
     fun verifyPassword(
         rawPassword: String,
         salt: String,
-        storedHash: String,
-        fallbackPlain: String? = null
+        storedHash: String
     ): Boolean {
-        if (storedHash.isNotBlank()) {
-            if (storedHash.startsWith("pbkdf2:")) {
-                val computed = hashPasswordPBKDF2(rawPassword, salt)
-                return constantTimeEquals(computed, storedHash)
-            } else {
-                // Legacy SHA-256 verification
-                val computed = hashPasswordLegacySha256(rawPassword, salt)
-                return constantTimeEquals(computed, storedHash)
-            }
+        if (storedHash.isBlank()) {
+            return false
         }
-        if (!fallbackPlain.isNullOrBlank()) {
-            return constantTimeEquals(rawPassword, fallbackPlain)
+        return if (storedHash.startsWith("pbkdf2:")) {
+            val computed = hashPasswordPBKDF2(rawPassword, salt)
+            constantTimeEquals(computed, storedHash)
+        } else {
+            // Legacy SHA-256 verification
+            val computed = hashPasswordLegacySha256(rawPassword, salt)
+            constantTimeEquals(computed, storedHash)
         }
-        return false
     }
 
     /**
@@ -127,14 +137,22 @@ object TenantSecurityContext {
     private var currentClaims: SecurityClaims? = null
 
     @Volatile
-    private var currentTenantId: String = "INST-SXA-2026"
+    private var currentTenantId: String? = null
 
     fun setContext(claims: SecurityClaims?, tenantId: String) {
         currentClaims = claims
-        currentTenantId = tenantId
+        currentTenantId = tenantId.trim()
+    }
+
+    fun clearContext() {
+        currentClaims = null
+        currentTenantId = null
     }
 
     fun getActiveTenantId(): String = currentTenantId
+        ?: throw TenantSecurityException("Tenant violation: No active tenant context established.")
+
+    fun getActiveTenantIdOrNull(): String? = currentTenantId
 
     fun getCurrentClaims(): SecurityClaims? = currentClaims
 
@@ -143,9 +161,11 @@ object TenantSecurityContext {
      * Prevents cross-school unauthorized data reads/writes.
      */
     fun assertTenantAccess(targetInstitutionId: String) {
-        if (currentTenantId != targetInstitutionId) {
+        val activeTenant = currentTenantId
+            ?: throw TenantSecurityException("Tenant violation: No active tenant context established.")
+        if (activeTenant != targetInstitutionId) {
             throw TenantSecurityException(
-                "Tenant violation: Active tenant is '$currentTenantId' but attempted operation on '$targetInstitutionId'."
+                "Tenant violation: Active tenant is '$activeTenant' but attempted operation on '$targetInstitutionId'."
             )
         }
     }

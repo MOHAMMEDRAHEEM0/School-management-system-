@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -56,12 +57,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.entities.InchargeEditRequestEntity
 import com.example.data.local.entities.StudentEntity
+import com.example.ui.components.DynamicTimetablePeriodTracker
+import com.example.ui.components.GeminiAiPredictiveAnalyticsDeck
 import com.example.ui.components.GlassBadge
 import com.example.ui.components.GlassButton
 import com.example.ui.components.GlassCard
 import com.example.ui.components.GlassOutlinedButton
 import com.example.ui.components.GlassTextField
 import com.example.ui.components.OfficialSealStamp
+import com.example.ui.components.ParentTeacherMessagingSystem
 import com.example.ui.theme.GlassBorderLight
 import com.example.ui.theme.GovGreen
 import com.example.ui.theme.GovNavyDark
@@ -191,16 +195,17 @@ fun InchargeDashboard(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Segmented Tabs
+        // Segmented Tabs with Smooth Scrolling
         Surface(
             shape = RoundedCornerShape(8.dp),
             color = PureWhite,
             border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorderLight),
             modifier = Modifier.fillMaxWidth()
         ) {
-            TabRow(
+            ScrollableTabRow(
                 selectedTabIndex = selectedTab,
                 containerColor = PureWhite,
+                edgePadding = 6.dp,
                 indicator = { tabPositions ->
                     TabRowDefaults.Indicator(
                         modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
@@ -223,6 +228,21 @@ fun InchargeDashboard(
                     selected = selectedTab == 2,
                     onClick = { selectedTab = 2 },
                     text = { Text("Section Fees", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
+                )
+                Tab(
+                    selected = selectedTab == 3,
+                    onClick = { selectedTab = 3 },
+                    text = { Text("Parent Messages", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
+                )
+                Tab(
+                    selected = selectedTab == 4,
+                    onClick = { selectedTab = 4 },
+                    text = { Text("At-Risk Radar", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
+                )
+                Tab(
+                    selected = selectedTab == 5,
+                    onClick = { selectedTab = 5 },
+                    text = { Text("Section Timetable", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
                 )
             }
         }
@@ -479,6 +499,34 @@ fun InchargeDashboard(
                     }
                 }
             }
+        }
+
+        // =====================================================================
+        // TAB 3: IN-APP PARENT-TEACHER MESSAGING (CLASS INCHARGE DESK)
+        // =====================================================================
+        if (selectedTab == 3) {
+            ParentTeacherMessagingSystem(
+                parentName = "Vikram Sharma (Guardian of Aarav Sharma)",
+                inchargeName = "Mrs. Sunita Kapoor (Class Incharge 10-A)"
+            )
+        }
+
+        // =====================================================================
+        // TAB 4: AT-RISK SCHOLARS & PREDICTIVE RADAR
+        // =====================================================================
+        if (selectedTab == 4) {
+            GeminiAiPredictiveAnalyticsDeck(
+                students = sectionStudents
+            )
+        }
+
+        // =====================================================================
+        // TAB 5: SECTION 10-A DYNAMIC TIMETABLE & PERIOD TRACKER
+        // =====================================================================
+        if (selectedTab == 5) {
+            DynamicTimetablePeriodTracker(
+                classSection = "10-A"
+            )
         }
     }
 

@@ -59,6 +59,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.components.AttendanceFeeSyncWorkManagerCard
 import com.example.ui.components.GlassBadge
 import com.example.ui.components.GlassButton
 import com.example.ui.components.GlassCard
@@ -301,6 +302,13 @@ fun AuditLogsScreen(
                 }
             }
         }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // WorkManager Idle & Charging Battery-Preserving Sync Strategy Card
+        AttendanceFeeSyncWorkManagerCard(
+            institutionId = "INST-SXA-2026"
+        )
 
         Spacer(modifier = Modifier.height(12.dp))
 

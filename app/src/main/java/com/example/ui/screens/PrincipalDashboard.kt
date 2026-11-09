@@ -66,8 +66,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.core.FeatureAvailability
 import com.example.data.local.entities.StaffEntity
 import com.example.ui.components.AiAcademicToolsSection
+import com.example.ui.components.ExecutiveCommandShortcutsDeck
 import com.example.ui.components.GlassBadge
 import com.example.ui.components.GlassButton
 import com.example.ui.components.GlassCard
@@ -92,7 +94,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun PrincipalDashboard(
     viewModel: SchoolViewModel,
-    onNavigateToAuditLogs: () -> Unit
+    onNavigateToAuditLogs: () -> Unit,
+    onNavigateToWhatsAppHub: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -261,6 +264,14 @@ fun PrincipalDashboard(
 
         Spacer(modifier = Modifier.height(14.dp))
 
+        // Executive Command Shortcuts Deck (Gemini AI, WhatsApp Hub / Push, PDF Export)
+        ExecutiveCommandShortcutsDeck(
+            viewModel = viewModel,
+            onNavigateToWhatsAppHub = onNavigateToWhatsAppHub
+        )
+
+        Spacer(modifier = Modifier.height(14.dp))
+
         // Segmented Control for Principal Modules
         Surface(
             shape = RoundedCornerShape(8.dp),
@@ -294,17 +305,21 @@ fun PrincipalDashboard(
                     onClick = { selectedTab = 2 },
                     text = { Text("Assets & Bills", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
                 )
-                Tab(
-                    selected = selectedTab == 3,
-                    onClick = { selectedTab = 3 },
-                    text = { Text("AI Academic Tools", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
-                )
-                Tab(
-                    selected = selectedTab == 4,
-                    onClick = { selectedTab = 4 },
-                    text = { Text("Payment Sandbox", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) },
-                    modifier = Modifier.testTag("tab_principal_payment_sandbox")
-                )
+                if (FeatureAvailability.isAiAcademicToolsEnabled) {
+                    Tab(
+                        selected = selectedTab == 3,
+                        onClick = { selectedTab = 3 },
+                        text = { Text("AI Academic Tools", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
+                    )
+                }
+                if (FeatureAvailability.isPaymentSandboxEnabled) {
+                    Tab(
+                        selected = selectedTab == 4,
+                        onClick = { selectedTab = 4 },
+                        text = { Text("Payment Sandbox", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) },
+                        modifier = Modifier.testTag("tab_principal_payment_sandbox")
+                    )
+                }
             }
         }
 
@@ -705,7 +720,7 @@ fun PrincipalDashboard(
         // =====================================================================
         // TAB 3: AI ACADEMIC TOOLS (GEMINI 3.5 FLASH CO-PILOT)
         // =====================================================================
-        if (selectedTab == 3) {
+        if (FeatureAvailability.isAiAcademicToolsEnabled && selectedTab == 3) {
             AiAcademicToolsSection(
                 viewModel = viewModel,
                 userRole = "PRINCIPAL",
@@ -716,7 +731,7 @@ fun PrincipalDashboard(
         // =====================================================================
         // TAB 4: PAYMENT SANDBOX DASHBOARD (ADMIN WEBHOOK & LEDGER VERIFIER)
         // =====================================================================
-        if (selectedTab == 4) {
+        if (FeatureAvailability.isPaymentSandboxEnabled && selectedTab == 4) {
             com.example.ui.components.PaymentSandboxDashboard(
                 viewModel = viewModel,
                 modifier = Modifier.fillMaxWidth()

@@ -138,6 +138,6 @@ object SecureSessionManager {
     fun clearSession() {
         activeSession = null
         _sessionFlow.value = null
-        TenantSecurityContext.setContext(null, "INST-SXA-2026")
+        TenantSecurityContext.clearContext()
     }
 }

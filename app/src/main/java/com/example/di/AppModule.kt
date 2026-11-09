@@ -36,8 +36,11 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideCloudSyncManager(dao: SchoolDao): CloudSyncManager {
-        return CloudSyncManager(dao)
+    fun provideCloudSyncManager(
+        dao: SchoolDao,
+        outboxManager: DurableOutboxManager
+    ): CloudSyncManager {
+        return CloudSyncManager(dao, outboxManager)
     }
 
     @Provides
@@ -48,11 +51,18 @@ object AppModule {
 
     @Provides
     @Singleton
+    fun provideCloudOutboxDispatcher(): com.example.data.remote.sync.CloudOutboxDispatcher {
+        return com.example.data.remote.sync.FirestoreCloudOutboxDispatcher()
+    }
+
+    @Provides
+    @Singleton
     fun provideDurableOutboxManager(
         dao: SchoolDao,
-        monitor: NetworkConnectivityMonitor
+        monitor: NetworkConnectivityMonitor,
+        dispatcher: com.example.data.remote.sync.CloudOutboxDispatcher
     ): DurableOutboxManager {
-        return DurableOutboxManager(dao, monitor)
+        return DurableOutboxManager(dao, monitor, cloudDispatcher = dispatcher)
     }
 
     @Provides
