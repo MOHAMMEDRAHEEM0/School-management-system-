@@ -285,6 +285,9 @@ class SchoolViewModel @Inject constructor(
         immutableAuditService.startPeriodicSync(viewModelScope, intervalMillis = 60_000L)
 
         viewModelScope.launch {
+            // Guarantee demo users and institution data are seeded in Room
+            runCatching { repository.ensureDemoUsersAndDataSeeded() }
+
             val isVerified = runCatching { prefsManager.isSchoolVerifiedOnce() }.getOrDefault(false)
             val isSetupCompleted = runCatching { prefsManager.isSetupCompletedOnce() }.getOrDefault(false)
 

@@ -84,25 +84,30 @@ class DurableOutboxAttendanceSyncTest {
         db.close()
     }
 
-    private fun setSessionForTenant(tenantId: String) {
+    private fun setSessionForTenant(tenantId: String, role: UserRole = UserRole.ADMIN, assignedClass: String? = "10-A") {
         val user = UserEntity(
             id = "USR-$tenantId-01",
             institutionId = tenantId,
-            username = "teacher_$tenantId",
-            email = "teacher@$tenantId.edu",
-            displayName = "Teacher $tenantId",
-            role = UserRole.TEACHER.name,
+            username = "admin_$tenantId",
+            email = "admin@$tenantId.edu",
+            displayName = "Admin $tenantId",
+            role = role.name,
             password = "",
             passwordSalt = "",
             passwordHash = ""
         )
         val claims = SecurityClaims(
             userId = user.id,
-            role = UserRole.TEACHER,
-            roleClaim = UserRole.TEACHER.name,
+            role = role,
+            roleClaim = role.name,
             displayName = user.displayName,
             email = user.email,
-            permissions = setOf(com.example.data.model.SchoolPermissions.MARK_ATTENDANCE_SECTION),
+            assignedClassSection = assignedClass,
+            permissions = setOf(
+                com.example.data.model.SchoolPermissions.MARK_ATTENDANCE_SECTION,
+                com.example.data.model.SchoolPermissions.VERIFY_ATTENDANCE_INCHARGE,
+                com.example.data.model.SchoolPermissions.APPROVE_ATTENDANCE_PRINCIPAL
+            ),
             sessionToken = "TEST-TOKEN-$tenantId"
         )
         val session = UserSession(
@@ -110,7 +115,7 @@ class DurableOutboxAttendanceSyncTest {
             institutionId = tenantId,
             email = user.email,
             displayName = user.displayName,
-            role = UserRole.TEACHER,
+            role = role,
             sessionToken = "TEST-TOKEN-$tenantId",
             claims = claims
         )

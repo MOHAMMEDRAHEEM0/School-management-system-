@@ -76,6 +76,11 @@ data class TeacherAttendanceUiState(
     val isLoading: Boolean = false,
     val isSaving: Boolean = false,
     val isAlreadyRecorded: Boolean = false,
+    val isAuthorizedToMark: Boolean = true,
+    val authorizationError: String? = null,
+    val validationError: String? = null,
+    val duplicateWarning: String? = null,
+    val isEmptyRoster: Boolean = false,
     val lastSavedTimestamp: Long? = null,
     val feedbackMessage: String? = null,
     val errorMessage: String? = null,
@@ -110,13 +115,71 @@ class TeacherAttendanceViewModel @Inject constructor(
 
         val tName = activeClaims?.displayName ?: "Faculty Member"
         val tId = activeClaims?.userId ?: "FAC-TCH-01"
+        val role = activeClaims?.role
+
+        val isSystemAdmin = role in setOf(
+            com.example.data.model.UserRole.ADMIN,
+            com.example.data.model.UserRole.PRINCIPAL,
+            com.example.data.model.UserRole.VICE_PRINCIPAL
+        )
+        val isTeacherOrIncharge = role in setOf(
+            com.example.data.model.UserRole.TEACHER,
+            com.example.data.model.UserRole.TEACHING,
+            com.example.data.model.UserRole.INCHARGE
+        )
+
+        val canMark = isSystemAdmin || isTeacherOrIncharge || (activeClaims?.hasPermission("MARK_ATTENDANCE_SECTION") == true)
 
         _uiState.update {
             it.copy(
                 institutionId = activeTenant,
                 teacherName = tName,
-                teacherId = tId
+                teacherId = tId,
+                isAuthorizedToMark = canMark,
+                authorizationError = if (!canMark) "Unauthorized: Role '${role?.name ?: "USER"}' does not have permission to mark attendance." else null
             )
+        }
+
+        // Dynamically load assigned classes
+        viewModelScope.launch {
+            val allClasses = schoolRepository.getAllAcademicClassesList()
+            val available = if (isSystemAdmin) {
+                val mapped = allClasses.map { "${it.className}-${it.section}".replace("Grade ", "").replace("Class ", "") }.distinct()
+                mapped.ifEmpty { listOf("10-A", "10-B", "9-A", "9-B", "8-A") }
+            } else if (isTeacherOrIncharge) {
+                val assignedSection = activeClaims?.assignedClassSection
+                val list = mutableListOf<String>()
+                if (!assignedSection.isNullOrBlank()) {
+                    list.add(assignedSection)
+                }
+                allClasses.forEach { c ->
+                    val cleanSec = "${c.className}-${c.section}".replace("Grade ", "").replace("Class ", "")
+                    if (c.classTeacherId == tId && !list.contains(cleanSec)) {
+                        list.add(cleanSec)
+                    }
+                }
+                if (list.isEmpty() && !assignedSection.isNullOrBlank()) {
+                    list.add(assignedSection)
+                }
+                list.ifEmpty { listOf("10-A") }
+            } else {
+                emptyList()
+            }
+
+            val defaultClass = available.firstOrNull() ?: "10-A"
+            _uiState.update {
+                it.copy(
+                    availableClasses = available,
+                    selectedClass = defaultClass,
+                    isAuthorizedToMark = canMark && (isSystemAdmin || available.isNotEmpty()),
+                    authorizationError = if (!canMark) {
+                        "Unauthorized: Role '${role?.name ?: "USER"}' does not have permission to mark daily attendance."
+                    } else if (!isSystemAdmin && available.isEmpty()) {
+                        "No classes currently assigned to faculty member '$tName'."
+                    } else null
+                )
+            }
+            refreshRosterAndExistingRecords()
         }
 
         // Observe students from repository
@@ -234,10 +297,12 @@ class TeacherAttendanceViewModel @Inject constructor(
     }
 
     fun selectSession(session: String) {
-        _uiState.update { it.copy(selectedSession = session) }
+        _uiState.update { it.copy(selectedSession = session, isLoading = true) }
+        refreshRosterAndExistingRecords()
     }
 
     fun setStudentStatus(studentId: String, status: String) {
+        if (!_uiState.value.isAuthorizedToMark) return
         _uiState.update { state ->
             val updatedRoster = state.roster.map { item ->
                 if (item.studentId == studentId) {
@@ -245,11 +310,12 @@ class TeacherAttendanceViewModel @Inject constructor(
                 } else item
             }
             val summary = calculateSummary(updatedRoster)
-            state.copy(roster = updatedRoster, summary = summary)
+            state.copy(roster = updatedRoster, summary = summary, validationError = null)
         }
     }
 
     fun setStudentRemarks(studentId: String, remarks: String) {
+        if (!_uiState.value.isAuthorizedToMark) return
         _uiState.update { state ->
             val updatedRoster = state.roster.map { item ->
                 if (item.studentId == studentId) {
@@ -261,22 +327,25 @@ class TeacherAttendanceViewModel @Inject constructor(
     }
 
     fun markAllPresent() {
+        if (!_uiState.value.isAuthorizedToMark) return
         _uiState.update { state ->
             val updatedRoster = state.roster.map { it.copy(status = "PRESENT") }
             val summary = calculateSummary(updatedRoster)
-            state.copy(roster = updatedRoster, summary = summary)
+            state.copy(roster = updatedRoster, summary = summary, validationError = null)
         }
     }
 
     fun markAllAbsent() {
+        if (!_uiState.value.isAuthorizedToMark) return
         _uiState.update { state ->
             val updatedRoster = state.roster.map { it.copy(status = "ABSENT") }
             val summary = calculateSummary(updatedRoster)
-            state.copy(roster = updatedRoster, summary = summary)
+            state.copy(roster = updatedRoster, summary = summary, validationError = null)
         }
     }
 
     fun toggleSingleStudent(studentId: String) {
+        if (!_uiState.value.isAuthorizedToMark) return
         _uiState.update { state ->
             val updatedRoster = state.roster.map { item ->
                 if (item.studentId == studentId) {
@@ -290,7 +359,7 @@ class TeacherAttendanceViewModel @Inject constructor(
                 } else item
             }
             val summary = calculateSummary(updatedRoster)
-            state.copy(roster = updatedRoster, summary = summary)
+            state.copy(roster = updatedRoster, summary = summary, validationError = null)
         }
     }
 
@@ -298,22 +367,9 @@ class TeacherAttendanceViewModel @Inject constructor(
         val currentState = _uiState.value
 
         // 1. RBAC Permission & Authorization Check
-        val activeClaims = com.example.security.TenantSecurityContext.getCurrentClaims()
-            ?: com.example.security.SecureSessionManager.getActiveSession()?.claims
-
-        val isAuthorized = activeClaims != null && (
-            activeClaims.role in setOf(
-                com.example.data.model.UserRole.ADMIN,
-                com.example.data.model.UserRole.PRINCIPAL,
-                com.example.data.model.UserRole.VICE_PRINCIPAL,
-                com.example.data.model.UserRole.INCHARGE,
-                com.example.data.model.UserRole.TEACHER,
-                com.example.data.model.UserRole.TEACHING
-            ) || activeClaims.hasPermission("MARK_ATTENDANCE_SECTION")
-        )
-
-        if (!isAuthorized) {
-            val errorMsg = "Access Denied: You do not have permission to mark attendance for class ${currentState.selectedClass}."
+        if (!currentState.isAuthorizedToMark) {
+            val errorMsg = currentState.authorizationError
+                ?: "Access Denied: You do not have permission to mark attendance for class ${currentState.selectedClass}."
             _uiState.update { it.copy(errorMessage = errorMsg) }
             onComplete(false, errorMsg)
             return
@@ -322,7 +378,7 @@ class TeacherAttendanceViewModel @Inject constructor(
         // 2. Class Membership & Roster Validation
         if (currentState.roster.isEmpty()) {
             val msg = "No students enrolled in class ${currentState.selectedClass} to record attendance."
-            _uiState.update { it.copy(errorMessage = msg) }
+            _uiState.update { it.copy(errorMessage = msg, validationError = msg) }
             onComplete(false, msg)
             return
         }
@@ -332,28 +388,25 @@ class TeacherAttendanceViewModel @Inject constructor(
         val invalidEntries = currentState.roster.filter { it.status.uppercase() !in validStatuses }
         if (invalidEntries.isNotEmpty()) {
             val msg = "Invalid status found for student ${invalidEntries.first().studentName}. Must be Present, Absent, or Late."
-            _uiState.update { it.copy(errorMessage = msg) }
+            _uiState.update { it.copy(errorMessage = msg, validationError = msg) }
             onComplete(false, msg)
             return
         }
 
-        _uiState.update { it.copy(isSaving = true, errorMessage = null) }
+        _uiState.update { it.copy(isSaving = true, errorMessage = null, validationError = null) }
 
         viewModelScope.launch {
             try {
-                // 4. Duplicate Check: Prevent duplicate submission on the same date/session if already recorded
-                val existing = attendanceRepository.getAttendanceForClassAndDate(
+                // 4. Duplicate Check: check if attendance for this class and date exists
+                val existing = attendanceRepository.getAttendanceForClassDateAndSession(
                     currentState.selectedClass,
-                    currentState.selectedDate
-                )
-                if (existing.isNotEmpty() && !currentState.isAlreadyRecorded) {
-                    // Update state to reflect existing record to warn teacher
-                    _uiState.update {
-                        it.copy(
-                            isAlreadyRecorded = true,
-                            lastSavedTimestamp = existing.maxOfOrNull { it.dateTimestamp }
-                        )
-                    }
+                    currentState.selectedDate,
+                    currentState.selectedSession
+                ).ifEmpty {
+                    attendanceRepository.getAttendanceForClassAndDate(
+                        currentState.selectedClass,
+                        currentState.selectedDate
+                    )
                 }
 
                 val timestamp = System.currentTimeMillis()
@@ -374,7 +427,7 @@ class TeacherAttendanceViewModel @Inject constructor(
                     )
                 }
 
-                // Save directly to Room Database
+                // Save directly and atomically to Room Database (with durable outbox event)
                 attendanceRepository.saveDailyAttendanceBatch(
                     classSection = currentState.selectedClass,
                     date = currentState.selectedDate,
@@ -393,8 +446,8 @@ class TeacherAttendanceViewModel @Inject constructor(
                         entityId = "${currentState.selectedClass}_${currentState.selectedDate}",
                         actorUserId = currentState.teacherId,
                         actorName = currentState.teacherName,
-                        actorRole = activeClaims?.roleClaim ?: "TEACHER",
-                        previousState = if (currentState.isAlreadyRecorded) "PREVIOUSLY_RECORDED" else "PENDING",
+                        actorRole = "TEACHER",
+                        previousState = if (existing.isNotEmpty()) "PREVIOUSLY_RECORDED" else "PENDING",
                         newState = "COMMITTED_ROOM",
                         remarks = "Attendance marked for ${currentState.selectedClass} on ${currentState.selectedDate}: ${currentState.summary.presentCount} P, ${currentState.summary.absentCount} A, ${currentState.summary.lateCount} L (${currentState.summary.attendancePercentage}%)"
                     )
@@ -405,6 +458,7 @@ class TeacherAttendanceViewModel @Inject constructor(
                     it.copy(
                         isSaving = false,
                         isAlreadyRecorded = true,
+                        isReviewMode = false,
                         lastSavedTimestamp = timestamp,
                         feedbackMessage = successMsg,
                         showPostSaveWhatsAppPrompt = true
@@ -489,6 +543,7 @@ class TeacherAttendanceViewModel @Inject constructor(
     private suspend fun loadRosterForCurrentSelection(allStudents: List<StudentEntity>) {
         val currentClass = _uiState.value.selectedClass
         val currentDate = _uiState.value.selectedDate
+        val currentSession = _uiState.value.selectedSession
 
         // Filter students matching the grade and section
         // Format of selectedClass: e.g. "10-A"
@@ -500,13 +555,13 @@ class TeacherAttendanceViewModel @Inject constructor(
             val matchGrade = s.grade.equals(gradePart, ignoreCase = true) || s.grade.contains(gradePart, ignoreCase = true)
             val matchSection = s.section.equals(sectionPart, ignoreCase = true)
             matchGrade && matchSection
-        }.ifEmpty {
-            // Fallback if grade field has "Grade 10" or "10"
-            allStudents.filter { s -> s.section.equals(sectionPart, ignoreCase = true) }
         }.sortedBy { it.rollNumber }
 
-        // Check if records exist in Room database for this date and class
-        val existingRecords = attendanceRepository.getAttendanceForClassAndDate(currentClass, currentDate)
+        val isEmpty = matchingStudents.isEmpty()
+
+        // Check if records exist in Room database for this date, class, and session
+        val existingRecords = attendanceRepository.getAttendanceForClassDateAndSession(currentClass, currentDate, currentSession)
+            .ifEmpty { attendanceRepository.getAttendanceForClassAndDate(currentClass, currentDate) }
         val isAlreadyRecorded = existingRecords.isNotEmpty()
         val recordMap = existingRecords.associateBy { it.studentId }
 
@@ -527,12 +582,17 @@ class TeacherAttendanceViewModel @Inject constructor(
 
         val summary = calculateSummary(rosterItems)
         val lastSaved = existingRecords.maxOfOrNull { it.dateTimestamp }
+        val dupWarning = if (isAlreadyRecorded && lastSaved != null) {
+            "Attendance for $currentClass on $currentDate ($currentSession) was previously recorded on ${displayFormat.format(Date(lastSaved))}."
+        } else null
 
         _uiState.update {
             it.copy(
                 roster = rosterItems,
                 summary = summary,
                 isAlreadyRecorded = isAlreadyRecorded,
+                duplicateWarning = dupWarning,
+                isEmptyRoster = isEmpty,
                 lastSavedTimestamp = lastSaved,
                 isLoading = false
             )

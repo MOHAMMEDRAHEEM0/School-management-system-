@@ -256,7 +256,45 @@ fun AuthScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Institutional Pre-Seeded Default Test Accounts (1-Tap Login & Quick Fill)
+            DefaultCredentialsTestingPanel(
+                onAutoFill = { schoolCode, user, pass ->
+                    val inst = allInstitutions.find { it.registrationCode == schoolCode }
+                        ?: allInstitutions.firstOrNull()
+                    if (inst != null) {
+                        viewModel.selectInstitution(inst)
+                    }
+                    usernameInput = user
+                    passwordInput = pass
+                    loginErrorMessage = null
+                    Toast.makeText(context, "Filled credentials for $user", Toast.LENGTH_SHORT).show()
+                },
+                onDirectLogin = { schoolCode, user, pass ->
+                    isLoginLoading = true
+                    loginErrorMessage = null
+                    val inst = allInstitutions.find { it.registrationCode == schoolCode }
+                        ?: allInstitutions.firstOrNull()
+                    if (inst != null) {
+                        viewModel.selectInstitution(inst)
+                    }
+                    usernameInput = user
+                    passwordInput = pass
+                    viewModel.loginWithCredentials(user, pass) { success, message ->
+                        isLoginLoading = false
+                        if (success) {
+                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                            onLoginSuccess()
+                        } else {
+                            loginErrorMessage = message
+                        }
+                    }
+                },
+                isActionLoading = isLoginLoading
+            )
+
+            Spacer(modifier = Modifier.height(20.dp))
 
             // Institutional Compliance Footer
             InstitutionalFooter()
@@ -452,29 +490,59 @@ fun RegistrationLookupStage(
                 testTag = "registration_code_input"
             )
 
-            if (BuildConfig.DEBUG) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { 
+                        onCodeChange("3477")
+                        onContinue()
+                    }
+                    .testTag("quick_connect_st_xaviers"),
+                color = Color(0xFFEFF6FF),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFBFDBFE))
+            ) {
                 Row(
+                    modifier = Modifier.padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier
-                        .padding(top = 8.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFFEFF6FF))
-                        .clickable { onCodeChange("3477") }
-                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Key,
-                        contentDescription = "Default School",
-                        tint = GovNavyPrimary,
-                        modifier = Modifier.size(13.dp)
-                    )
-                    Text(
-                        text = "Default Test School: 3477 (St. Xavier's) • Tap to fill",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = GovNavyPrimary
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        Icon(
+                            imageVector = Icons.Default.School,
+                            contentDescription = "Default School",
+                            tint = GovNavyPrimary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = "St. Xavier's International Academy",
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = GovNavyDark
+                            )
+                            Text(
+                                text = "School Code: 3477 • Tap for 1-Tap Connect",
+                                fontSize = 11.sp,
+                                color = GovNavyPrimary,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                    Surface(
+                        color = GovNavyPrimary,
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Text(
+                            text = "Connect",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = PureWhite,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        )
+                    }
                 }
             }
 
@@ -791,7 +859,52 @@ fun CredentialsLoginStage(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(6.dp))
+
+                // Fast Role Switcher Pills
+                Text(
+                    text = "Select demo profile to fill credentials:",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = GovSlateMuted
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    val roles = listOf(
+                        "👑 Principal" to "principal",
+                        "🛡️ Admin" to "admin",
+                        "📋 In-Charge 10-A" to "incharge_10a",
+                        "👩‍🏫 Teacher" to "faculty_meenakshi",
+                        "🎓 Student 1 (Aarav)" to "aarav_sharma",
+                        "🎒 Student 2 (Ananya)" to "ananya_iyer",
+                        "👨‍👩‍👧 Parent" to "vikram_sharma",
+                        "💼 Accountant" to "accountant_mehta"
+                    )
+                    roles.forEach { (label, uName) ->
+                        Surface(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { onQuickSelectRole(uName, "Password@123") },
+                            color = Color(0xFFF1F5F9),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFCBD5E1))
+                        ) {
+                            Text(
+                                text = label,
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = GovNavyDark,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
 
                 LiquidGlassButton(
                     text = "Sign In to Campus",
@@ -1153,8 +1266,7 @@ fun DefaultCredentialsTestingPanel(
     onDirectLogin: (schoolCode: String, username: String, password: String) -> Unit,
     isActionLoading: Boolean = false
 ) {
-    if (!BuildConfig.DEBUG) return
-    var isExpanded by remember { mutableStateOf(false) }
+    var isExpanded by remember { mutableStateOf(true) }
 
     Surface(
         modifier = Modifier
@@ -1199,7 +1311,7 @@ fun DefaultCredentialsTestingPanel(
                     Column {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = "Default Test Credentials",
+                                text = "Default Demo Accounts (1-Tap Login)",
                                 fontSize = 13.5.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = GovNavyDark
@@ -1219,7 +1331,7 @@ fun DefaultCredentialsTestingPanel(
                             }
                         }
                         Text(
-                            text = "School: 3477 • Default Pass: Password@123",
+                            text = "School: 3477 • Password: Password@123",
                             fontSize = 11.sp,
                             color = GovSlateMuted
                         )
@@ -1238,10 +1350,10 @@ fun DefaultCredentialsTestingPanel(
                 }
             }
 
-            // Quick 1-Tap Login Chips
+            // Quick 1-Tap Login Horizontal Scroll Row
             Spacer(modifier = Modifier.height(10.dp))
             Text(
-                text = "Tap role pill to instant login (⚡) or expand matrix:",
+                text = "Tap role pill to instant login (⚡) or view detailed cards below:",
                 fontSize = 10.5.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = GovSlateMuted
@@ -1254,11 +1366,12 @@ fun DefaultCredentialsTestingPanel(
                     .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                QuickTestPill("👑 Admin", "3477", "admin", "Password@123", onDirectLogin, onAutoFill)
-                QuickTestPill("👩‍🏫 Teacher", "3477", "teacher", "Password@123", onDirectLogin, onAutoFill)
-                QuickTestPill("🎒 Student", "3477", "student", "Password@123", onDirectLogin, onAutoFill)
-                QuickTestPill("🏛️ Principal", "3477", "principal", "Password@123", onDirectLogin, onAutoFill)
-                QuickTestPill("📋 In-Charge", "3477", "incharge_10a", "Password@123", onDirectLogin, onAutoFill)
+                QuickTestPill("👑 Principal", "3477", "principal", "Password@123", onDirectLogin, onAutoFill)
+                QuickTestPill("🛡️ Admin", "3477", "admin", "Password@123", onDirectLogin, onAutoFill)
+                QuickTestPill("📋 In-Charge 10-A", "3477", "incharge_10a", "Password@123", onDirectLogin, onAutoFill)
+                QuickTestPill("👩‍🏫 Teacher (Physics)", "3477", "faculty_meenakshi", "Password@123", onDirectLogin, onAutoFill)
+                QuickTestPill("🎓 Student 1 (Aarav)", "3477", "aarav_sharma", "Password@123", onDirectLogin, onAutoFill)
+                QuickTestPill("🎒 Student 2 (Ananya)", "3477", "ananya_iyer", "Password@123", onDirectLogin, onAutoFill)
                 QuickTestPill("👨‍👩‍👧 Parent", "3477", "vikram_sharma", "Password@123", onDirectLogin, onAutoFill)
                 QuickTestPill("💼 Accountant", "3477", "accountant_mehta", "Password@123", onDirectLogin, onAutoFill)
             }
@@ -1267,7 +1380,7 @@ fun DefaultCredentialsTestingPanel(
             AnimatedVisibility(visible = isExpanded) {
                 Column(modifier = Modifier.padding(top = 12.dp)) {
                     Text(
-                        text = "Detailed Account Matrix (Pre-seeded):",
+                        text = "Pre-seeded Role Accounts Matrix:",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = GovNavyPrimary
@@ -1277,10 +1390,10 @@ fun DefaultCredentialsTestingPanel(
                     val testAccounts = listOf(
                         TestAccountItem(
                             roleTitle = "Prof. Robert Vance (Principal)",
-                            roleTag = "SUPER_ADMIN",
+                            roleTag = "PRINCIPAL / ADMIN",
                             username = "principal",
                             password = "Password@123",
-                            scope = "Full Institutional Clearance & Staff Oversight",
+                            scope = "Full Institutional Clearance, Approvals & Staff Oversight",
                             color = GovNavyPrimary
                         ),
                         TestAccountItem(
@@ -1288,7 +1401,7 @@ fun DefaultCredentialsTestingPanel(
                             roleTag = "INCHARGE 10-A",
                             username = "incharge_10a",
                             password = "Password@123",
-                            scope = "Class 10-A Roll-Call, Marksheets, Edit Requests",
+                            scope = "Class 10-A Daily Attendance, Verification & Results",
                             color = Color(0xFF0D9488)
                         ),
                         TestAccountItem(
@@ -1301,26 +1414,34 @@ fun DefaultCredentialsTestingPanel(
                         ),
                         TestAccountItem(
                             roleTitle = "Aarav Sharma (Scholar Roll #1)",
-                            roleTag = "STUDENT",
+                            roleTag = "STUDENT 1",
                             username = "aarav_sharma",
                             password = "Password@123",
-                            scope = "Digital ID Card, Attendance, Marksheet, Fees",
+                            scope = "Digital ID Card, Attendance Turnout, Report Card",
                             color = Color(0xFF7C3AED)
+                        ),
+                        TestAccountItem(
+                            roleTitle = "Ananya Iyer (Scholar Roll #2)",
+                            roleTag = "STUDENT 2",
+                            username = "ananya_iyer",
+                            password = "Password@123",
+                            scope = "Digital ID Card, Grade 10-A Attendance, Fees",
+                            color = Color(0xFF9333EA)
                         ),
                         TestAccountItem(
                             roleTitle = "Vikram Sharma (Guardian)",
                             roleTag = "PARENT",
                             username = "vikram_sharma",
                             password = "Password@123",
-                            scope = "Student Progress, Fee Receipts & Circulars",
+                            scope = "Ward Progress, Attendance, Fee Receipts & Circulars",
                             color = Color(0xFFD97706)
                         ),
                         TestAccountItem(
-                            roleTitle = "Suresh Mehta (Accounts & Bursar)",
+                            roleTitle = "Rajesh Mehta (Senior Accounts Officer)",
                             roleTag = "ACCOUNTANT",
                             username = "accountant_mehta",
                             password = "Password@123",
-                            scope = "Institutional Collections, Challans & Dues",
+                            scope = "Institutional Collections, Fee Ledger & Challans",
                             color = Color(0xFF475569)
                         )
                     )

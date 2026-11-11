@@ -59,6 +59,9 @@ import com.example.data.local.entities.InchargeEditRequestEntity
 import com.example.data.local.entities.StudentEntity
 import com.example.ui.components.DynamicTimetablePeriodTracker
 import com.example.ui.components.GeminiAiPredictiveAnalyticsDeck
+import com.example.ui.components.GpsTransportRouteTracker
+import com.example.ui.components.InchargeLeaveApprovalDeck
+import com.example.ui.components.SchoolCircularNoticeBoard
 import com.example.ui.components.GlassBadge
 import com.example.ui.components.GlassButton
 import com.example.ui.components.GlassCard
@@ -243,6 +246,21 @@ fun InchargeDashboard(
                     selected = selectedTab == 5,
                     onClick = { selectedTab = 5 },
                     text = { Text("Section Timetable", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
+                )
+                Tab(
+                    selected = selectedTab == 6,
+                    onClick = { selectedTab = 6 },
+                    text = { Text("Leave Approvals", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
+                )
+                Tab(
+                    selected = selectedTab == 7,
+                    onClick = { selectedTab = 7 },
+                    text = { Text("Notice Board", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
+                )
+                Tab(
+                    selected = selectedTab == 8,
+                    onClick = { selectedTab = 8 },
+                    text = { Text("Bus Tracker", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
                 )
             }
         }
@@ -526,6 +544,33 @@ fun InchargeDashboard(
         if (selectedTab == 5) {
             DynamicTimetablePeriodTracker(
                 classSection = "10-A"
+            )
+        }
+
+        // =====================================================================
+        // TAB 6: IN-CHARGE STUDENT LEAVE APPROVAL DECK
+        // =====================================================================
+        if (selectedTab == 6) {
+            InchargeLeaveApprovalDeck(
+                classSection = "10-A"
+            )
+        }
+
+        // =====================================================================
+        // TAB 7: CAMPUS CIRCULARS & NOTICE BOARD
+        // =====================================================================
+        if (selectedTab == 7) {
+            SchoolCircularNoticeBoard()
+        }
+
+        // =====================================================================
+        // TAB 8: GPS TRANSPORT & FLEET ROUTE TRACKER
+        // =====================================================================
+        if (selectedTab == 8) {
+            GpsTransportRouteTracker(
+                routeNumber = "Route #1",
+                routeName = "Civil Lines - Sector 5 Express",
+                studentName = "Section 10-A Bus Commuters"
             )
         }
     }

@@ -75,6 +75,7 @@ class SchoolRepository @Inject constructor(
     // 2. ACADEMIC CLASSES (Tenant-Aware)
     // =========================================================================
     val allClasses: Flow<List<AcademicClassEntity>> = dao.getAllClasses()
+    suspend fun getAllAcademicClassesList(): List<AcademicClassEntity> = dao.getAllClassesList()
     fun getClassesForInstitution(institutionId: String): Flow<List<AcademicClassEntity>> =
         dao.getClassesForInstitution(institutionId)
     suspend fun insertClass(academicClass: AcademicClassEntity) = dao.insertAcademicClass(academicClass)
@@ -674,4 +675,378 @@ class SchoolRepository @Inject constructor(
 
     suspend fun insertParentWardLink(link: ParentWardLinkEntity) =
         dao.insertParentWardLink(link)
+
+    // =========================================================================
+    // 24. DEMO USER & DATA GUARANTEE SEEDER
+    // =========================================================================
+    suspend fun ensureDemoUsersAndDataSeeded() = withContext(Dispatchers.IO) {
+        val defaultTenant = "INST-SXA-2026"
+
+        // 1. Ensure St. Xavier's institution is in Room
+        if (dao.getInstitution() == null) {
+            dao.insertInstitution(
+                InstitutionEntity(
+                    institutionId = defaultTenant,
+                    registrationCode = "3477",
+                    name = "St. Xavier's International Academy",
+                    motto = "Excellence in Truth & Service",
+                    affiliationCode = "CBSE Affil: 1130492 | ISO 9001:2026",
+                    address = "Campus Road, Civil Lines, Sector 5",
+                    cityCampus = "Trimurtinagar, Ahmednagar & Sector 5",
+                    contactPhone = "+91 98111 22334",
+                    email = "office@stxaviers.edu",
+                    website = "https://stxaviers.edu",
+                    currentAcademicYear = "2026-2027",
+                    availableBatches = "2026-27,2025-26,2024-25",
+                    principalName = "Prof. Robert Vance, Ph.D.",
+                    themeColorHex = "#0B2545",
+                    logoAssetPath = "ic_school_crest",
+                    establishedYear = 1984,
+                    isSetupCompleted = true
+                )
+            )
+        }
+
+        // 2. Ensure Academic Class 10-A exists
+        val classes = dao.getAllClassesList()
+        if (classes.none { it.className.contains("10") && it.section == "A" }) {
+            dao.insertAcademicClass(
+                AcademicClassEntity(
+                    classId = "CLS-GRADE10-A",
+                    institutionId = defaultTenant,
+                    className = "Grade 10",
+                    section = "A",
+                    classTeacherId = "FAC-TCH-02",
+                    classTeacherName = "Mrs. Sunita Kapoor",
+                    roomNumber = "Room 304 - Secondary Wing",
+                    studentCount = 30,
+                    academicYear = "2026-2027"
+                )
+            )
+        }
+
+        // 3. Ensure Staff members exist
+        val staff = dao.getAllStaffList()
+        if (staff.none { it.id == "FAC-PRIN-01" }) {
+            dao.insertStaff(
+                StaffEntity(
+                    id = "FAC-PRIN-01",
+                    institutionId = defaultTenant,
+                    name = "Prof. Robert Vance, Ph.D.",
+                    roleType = "PRINCIPAL",
+                    designation = "Principal & Executive Director",
+                    department = "Executive Directorate",
+                    phone = "9811122334",
+                    email = "principal@stxaviers.edu",
+                    qualification = "Ph.D. Educational Leadership, M.Sc.",
+                    experienceYears = 24,
+                    govtRegNumber = "SXA-EXEC-001",
+                    isPreAuthorizedByPrincipal = true,
+                    isOtpVerified = true,
+                    authPin = "9876",
+                    isPresentToday = true,
+                    checkInTime = "07:45 AM",
+                    avatarColorHex = "#0B2545",
+                    isClassIncharge = false
+                )
+            )
+        }
+        if (staff.none { it.id == "FAC-TCH-02" }) {
+            dao.insertStaff(
+                StaffEntity(
+                    id = "FAC-TCH-02",
+                    institutionId = defaultTenant,
+                    name = "Mrs. Sunita Kapoor",
+                    roleType = "INCHARGE",
+                    designation = "Class In-Charge 10-A & Mathematics Faculty",
+                    department = "Mathematical Sciences",
+                    phone = "9876543211",
+                    email = "sunita.kapoor@stxaviers.edu",
+                    qualification = "M.Sc. Mathematics, B.Ed.",
+                    experienceYears = 12,
+                    govtRegNumber = "SXA-FAC-102",
+                    isPreAuthorizedByPrincipal = true,
+                    isOtpVerified = true,
+                    authPin = "1234",
+                    isPresentToday = true,
+                    checkInTime = "08:00 AM",
+                    avatarColorHex = "#E65100",
+                    isClassIncharge = true,
+                    inchargeClass = "10-A",
+                    assignedSubjects = "Mathematics, Advanced Calculus"
+                )
+            )
+        }
+        if (staff.none { it.id == "FAC-TCH-01" }) {
+            dao.insertStaff(
+                StaffEntity(
+                    id = "FAC-TCH-01",
+                    institutionId = defaultTenant,
+                    name = "Dr. Meenakshi Sundaram",
+                    roleType = "TEACHING",
+                    designation = "Senior Faculty in Physics & Science",
+                    department = "Science Division",
+                    phone = "9876543210",
+                    email = "m.sundaram@stxaviers.edu",
+                    qualification = "M.Sc., B.Ed., Ph.D. Physics",
+                    experienceYears = 14,
+                    govtRegNumber = "SXA-FAC-101",
+                    isPreAuthorizedByPrincipal = true,
+                    isOtpVerified = true,
+                    authPin = "1234",
+                    isPresentToday = true,
+                    checkInTime = "07:55 AM",
+                    avatarColorHex = "#15803D",
+                    isClassIncharge = false,
+                    assignedSubjects = "Physics, General Science"
+                )
+            )
+        }
+
+        // 4. Ensure Students exist
+        val students = dao.getAllStudentsList()
+        if (students.none { it.id == "ADM-2026-001" }) {
+            dao.insertStudent(
+                StudentEntity(
+                    id = "ADM-2026-001",
+                    institutionId = defaultTenant,
+                    admissionNumber = "ADM-2026-001",
+                    name = "Aarav Sharma",
+                    grade = "10",
+                    section = "A",
+                    rollNumber = 1,
+                    gender = "Male",
+                    dateOfBirth = "2011-03-15",
+                    guardianName = "Vikram Sharma",
+                    guardianPhone = "+91 91234 56780",
+                    studentPhone = "9123456780",
+                    email = "aarav.sharma@stxaviers.edu",
+                    bloodGroup = "O+",
+                    attendancePercentage = 94.5f,
+                    feeDue = 0.0,
+                    feePaid = 65000.0,
+                    avatarColorHex = "#0B2545",
+                    address = "42 North Avenue, Estate Square"
+                )
+            )
+        }
+        if (students.none { it.id == "ADM-2026-002" }) {
+            dao.insertStudent(
+                StudentEntity(
+                    id = "ADM-2026-002",
+                    institutionId = defaultTenant,
+                    admissionNumber = "ADM-2026-002",
+                    name = "Ananya Iyer",
+                    grade = "10",
+                    section = "A",
+                    rollNumber = 2,
+                    gender = "Female",
+                    dateOfBirth = "2011-06-21",
+                    guardianName = "Suresh Iyer",
+                    guardianPhone = "+91 91234 56781",
+                    studentPhone = "9123456781",
+                    email = "ananya.iyer@stxaviers.edu",
+                    bloodGroup = "B+",
+                    attendancePercentage = 97.2f,
+                    feeDue = 0.0,
+                    feePaid = 65000.0,
+                    avatarColorHex = "#15803D"
+                )
+            )
+        }
+
+        // 5. Ensure Demo Users exist with PBKDF2 hash & plaintext fallback
+        val demoUsers = listOf(
+            UserEntity(
+                id = "FAC-PRIN-01",
+                institutionId = defaultTenant,
+                username = "principal",
+                email = "principal@stxaviers.edu",
+                password = "Password@123",
+                passwordSalt = "sxa_salt_prin_2026",
+                passwordHash = com.example.security.SecurityUtils.hashPasswordPBKDF2("Password@123", "sxa_salt_prin_2026"),
+                role = "PRINCIPAL",
+                displayName = "Prof. Robert Vance, Ph.D. (Principal)",
+                phoneNumber = "9811122334"
+            ),
+            UserEntity(
+                id = "USR-ADMIN-01",
+                institutionId = defaultTenant,
+                username = "admin",
+                email = "admin@stxaviers.edu",
+                password = "Password@123",
+                passwordSalt = "sxa_salt_adm_2026",
+                passwordHash = com.example.security.SecurityUtils.hashPasswordPBKDF2("Password@123", "sxa_salt_adm_2026"),
+                role = "ADMIN",
+                displayName = "System Administrator",
+                phoneNumber = "9811122330"
+            ),
+            UserEntity(
+                id = "FAC-TCH-02",
+                institutionId = defaultTenant,
+                username = "incharge_10a",
+                email = "sunita.kapoor@stxaviers.edu",
+                password = "Password@123",
+                passwordSalt = "sxa_salt_inch_2026",
+                passwordHash = com.example.security.SecurityUtils.hashPasswordPBKDF2("Password@123", "sxa_salt_inch_2026"),
+                role = "INCHARGE",
+                displayName = "Mrs. Sunita Kapoor (Class Incharge 10-A)",
+                phoneNumber = "9876543211"
+            ),
+            UserEntity(
+                id = "FAC-TCH-01",
+                institutionId = defaultTenant,
+                username = "faculty_meenakshi",
+                email = "m.sundaram@stxaviers.edu",
+                password = "Password@123",
+                passwordSalt = "sxa_salt_tch_2026",
+                passwordHash = com.example.security.SecurityUtils.hashPasswordPBKDF2("Password@123", "sxa_salt_tch_2026"),
+                role = "TEACHER",
+                displayName = "Dr. Meenakshi Sundaram (Physics Faculty)",
+                phoneNumber = "9876543210"
+            ),
+            UserEntity(
+                id = "ADM-2026-001",
+                institutionId = defaultTenant,
+                username = "aarav_sharma",
+                email = "aarav.sharma@stxaviers.edu",
+                password = "Password@123",
+                passwordSalt = "sxa_salt_stu_2026",
+                passwordHash = com.example.security.SecurityUtils.hashPasswordPBKDF2("Password@123", "sxa_salt_stu_2026"),
+                role = "STUDENT",
+                displayName = "Aarav Sharma (Grade 10-A)",
+                phoneNumber = "9123456780"
+            ),
+            UserEntity(
+                id = "ADM-2026-002",
+                institutionId = defaultTenant,
+                username = "ananya_iyer",
+                email = "ananya.iyer@stxaviers.edu",
+                password = "Password@123",
+                passwordSalt = "sxa_salt_ana_2026",
+                passwordHash = com.example.security.SecurityUtils.hashPasswordPBKDF2("Password@123", "sxa_salt_ana_2026"),
+                role = "STUDENT",
+                displayName = "Ananya Iyer (Grade 10-A)",
+                phoneNumber = "9123456781"
+            ),
+            UserEntity(
+                id = "USR-PAR-01",
+                institutionId = defaultTenant,
+                username = "vikram_sharma",
+                email = "vikram.sharma@stxaviers.edu",
+                password = "Password@123",
+                passwordSalt = "sxa_salt_par_2026",
+                passwordHash = com.example.security.SecurityUtils.hashPasswordPBKDF2("Password@123", "sxa_salt_par_2026"),
+                role = "PARENT",
+                displayName = "Vikram Sharma (Guardian of Aarav)",
+                phoneNumber = "+91 91234 56780"
+            ),
+            UserEntity(
+                id = "USR-ACC-01",
+                institutionId = defaultTenant,
+                username = "accountant_mehta",
+                email = "accountant@stxaviers.edu",
+                password = "Password@123",
+                passwordSalt = "sxa_salt_acc_2026",
+                passwordHash = com.example.security.SecurityUtils.hashPasswordPBKDF2("Password@123", "sxa_salt_acc_2026"),
+                role = "ACCOUNTANT",
+                displayName = "Rajesh Mehta (Senior Accounts Officer)",
+                phoneNumber = "9811199887"
+            )
+        )
+
+        for (u in demoUsers) {
+            val existing = dao.getUserById(u.id) ?: dao.getUserByUsernameOrPhone(u.username)
+            if (existing == null) {
+                dao.insertUser(u)
+            }
+        }
+
+        // 6. Ensure Timetable Slots for 10-A
+        val initialTimetable = listOf(
+            TimetableSlotEntity(
+                slotId = "TT-10A-MON-1",
+                institutionId = defaultTenant,
+                classSection = "10-A",
+                dayOfWeek = "Monday",
+                periodNumber = 1,
+                timeRange = "08:30 - 09:15 AM",
+                subject = "Mathematics",
+                teacherName = "Mrs. Sunita Kapoor",
+                teacherId = "FAC-TCH-02",
+                roomNumber = "Room 304"
+            ),
+            TimetableSlotEntity(
+                slotId = "TT-10A-MON-2",
+                institutionId = defaultTenant,
+                classSection = "10-A",
+                dayOfWeek = "Monday",
+                periodNumber = 2,
+                timeRange = "09:15 - 10:00 AM",
+                subject = "Physics (Science)",
+                teacherName = "Dr. Meenakshi Sundaram",
+                teacherId = "FAC-TCH-01",
+                roomNumber = "Physics Lab A"
+            ),
+            TimetableSlotEntity(
+                slotId = "TT-10A-MON-3",
+                institutionId = defaultTenant,
+                classSection = "10-A",
+                dayOfWeek = "Monday",
+                periodNumber = 3,
+                timeRange = "10:00 - 10:45 AM",
+                subject = "English Literature",
+                teacherName = "David K. Reynolds",
+                teacherId = "FAC-TCH-03",
+                roomNumber = "Room 304"
+            ),
+            TimetableSlotEntity(
+                slotId = "TT-10A-MON-4",
+                institutionId = defaultTenant,
+                classSection = "10-A",
+                dayOfWeek = "Monday",
+                periodNumber = 4,
+                timeRange = "11:15 - 12:00 PM",
+                subject = "Chemistry",
+                teacherName = "Dr. Meenakshi Sundaram",
+                teacherId = "FAC-TCH-01",
+                roomNumber = "Chemistry Lab"
+            )
+        )
+        dao.insertTimetableSlots(initialTimetable)
+
+        // 7. Ensure Student Leave Requests
+        val initialLeaves = listOf(
+            StudentLeaveRequestEntity(
+                leaveId = "LEV-2026-101",
+                institutionId = defaultTenant,
+                studentId = "ADM-2026-001",
+                studentName = "Aarav Sharma",
+                classSection = "10-A",
+                startDate = "2026-10-12",
+                endDate = "2026-10-13",
+                reason = "Inter-School Science Olympiad participation in New Delhi.",
+                status = "PENDING",
+                appliedBy = "PARENT",
+                appliedTimestamp = System.currentTimeMillis() - 7200000L
+            ),
+            StudentLeaveRequestEntity(
+                leaveId = "LEV-2026-102",
+                institutionId = defaultTenant,
+                studentId = "ADM-2026-002",
+                studentName = "Ananya Iyer",
+                classSection = "10-A",
+                startDate = "2026-10-14",
+                endDate = "2026-10-15",
+                reason = "Medical dental appointment and recovery.",
+                status = "APPROVED",
+                appliedBy = "PARENT",
+                appliedTimestamp = System.currentTimeMillis() - 86400000L,
+                reviewedBy = "Mrs. Sunita Kapoor (Class Incharge)",
+                reviewerRemarks = "Approved on medical certificate submission.",
+                reviewedTimestamp = System.currentTimeMillis() - 43200000L
+            )
+        )
+        dao.insertLeaveRequests(initialLeaves)
+    }
 }

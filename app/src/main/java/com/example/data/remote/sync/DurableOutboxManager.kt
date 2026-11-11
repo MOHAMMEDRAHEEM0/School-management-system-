@@ -227,6 +227,19 @@ class DurableOutboxManager(
                             ackToken = result.ackToken,
                             ackTimestamp = result.serverTimestamp
                         )
+                        // Genuine server acknowledgement: mark mirrored attendance record as synced in Room
+                        if (item.entityType.uppercase() in setOf("ATTENDANCE", "ATTENDANCE_RECORD")) {
+                            runCatching {
+                                val parts = item.entityId.split("_")
+                                if (parts.size >= 3) {
+                                    dao.markAttendanceRecordSynced(
+                                        classSection = parts[0].trim(),
+                                        date = parts[1].trim(),
+                                        personId = parts[2].trim()
+                                    )
+                                }
+                            }
+                        }
                         ackCount++
                         details.add("[ACK] ${item.entityType}:${item.entityId} -> Token ${result.ackToken}")
                     }

@@ -69,7 +69,11 @@ import androidx.compose.ui.unit.sp
 import com.example.core.FeatureAvailability
 import com.example.data.local.entities.StaffEntity
 import com.example.ui.components.AiAcademicToolsSection
+import com.example.ui.components.DynamicTimetablePeriodTracker
 import com.example.ui.components.ExecutiveCommandShortcutsDeck
+import com.example.ui.components.GpsTransportRouteTracker
+import com.example.ui.components.InchargeLeaveApprovalDeck
+import com.example.ui.components.SchoolCircularNoticeBoard
 import com.example.ui.components.GlassBadge
 import com.example.ui.components.GlassButton
 import com.example.ui.components.GlassCard
@@ -320,6 +324,26 @@ fun PrincipalDashboard(
                         modifier = Modifier.testTag("tab_principal_payment_sandbox")
                     )
                 }
+                Tab(
+                    selected = selectedTab == 5,
+                    onClick = { selectedTab = 5 },
+                    text = { Text("Circulars & Notices", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
+                )
+                Tab(
+                    selected = selectedTab == 6,
+                    onClick = { selectedTab = 6 },
+                    text = { Text("Leave Directorate", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
+                )
+                Tab(
+                    selected = selectedTab == 7,
+                    onClick = { selectedTab = 7 },
+                    text = { Text("Campus Timetable", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
+                )
+                Tab(
+                    selected = selectedTab == 8,
+                    onClick = { selectedTab = 8 },
+                    text = { Text("Fleet & Transport", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
+                )
             }
         }
 
@@ -735,6 +759,42 @@ fun PrincipalDashboard(
             com.example.ui.components.PaymentSandboxDashboard(
                 viewModel = viewModel,
                 modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        // =====================================================================
+        // TAB 5: CAMPUS NOTICE BOARD & OFFICIAL CIRCULARS
+        // =====================================================================
+        if (selectedTab == 5) {
+            SchoolCircularNoticeBoard()
+        }
+
+        // =====================================================================
+        // TAB 6: MASTER LEAVE DIRECTORATE
+        // =====================================================================
+        if (selectedTab == 6) {
+            InchargeLeaveApprovalDeck(
+                classSection = "All Sections"
+            )
+        }
+
+        // =====================================================================
+        // TAB 7: CAMPUS-WIDE TIMETABLE OVERVIEW
+        // =====================================================================
+        if (selectedTab == 7) {
+            DynamicTimetablePeriodTracker(
+                classSection = "10-A"
+            )
+        }
+
+        // =====================================================================
+        // TAB 8: LOGISTICS & BUS FLEET MONITOR
+        // =====================================================================
+        if (selectedTab == 8) {
+            GpsTransportRouteTracker(
+                routeNumber = "Fleet Unit #1",
+                routeName = "Civil Lines - Sector 5 Express",
+                studentName = "Executive Campus Transport Monitor"
             )
         }
     }

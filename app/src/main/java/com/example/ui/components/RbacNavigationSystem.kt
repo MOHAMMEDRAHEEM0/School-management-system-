@@ -567,12 +567,16 @@ fun RbacDashboardHost(
     ) { category ->
         when (category) {
             RbacRoleCategory.ADMIN -> {
-                // Admin Dashboard: Complete Administrative View
-                PrincipalDashboard(
-                    viewModel = viewModel,
-                    onNavigateToAuditLogs = onNavigateToAuditLogs,
-                    onNavigateToWhatsAppHub = onNavigateToWhatsAppHub
-                )
+                // Admin Dashboard: Complete Administrative View or Accountant Desk
+                if (currentRole == UserRole.ACCOUNTANT) {
+                    AccountantDashboard(viewModel = viewModel)
+                } else {
+                    PrincipalDashboard(
+                        viewModel = viewModel,
+                        onNavigateToAuditLogs = onNavigateToAuditLogs,
+                        onNavigateToWhatsAppHub = onNavigateToWhatsAppHub
+                    )
+                }
             }
             RbacRoleCategory.TEACHER -> {
                 // Teacher Dashboard: Faculty & Class In-Charge View

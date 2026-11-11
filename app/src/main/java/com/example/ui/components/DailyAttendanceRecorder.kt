@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -40,9 +42,12 @@ import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -205,10 +210,150 @@ fun DailyAttendanceRecorder(
             }
         }
 
+        // Authorization Warning Banner
+        if (!state.isAuthorizedToMark && state.authorizationError != null) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("banner_authorization_warning"),
+                shape = RoundedCornerShape(10.dp),
+                color = Color(0xFFFEF2F2),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFF87171))
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Lock, contentDescription = null, tint = GovRedAlert, modifier = Modifier.size(20.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "Attendance Editing Restricted",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF991B1B)
+                        )
+                        Text(
+                            text = state.authorizationError ?: "You do not have authorization to mark attendance for this class.",
+                            fontSize = 10.5.sp,
+                            color = Color(0xFF7F1D1D)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Duplicate Submission Warning Banner
+        if (state.duplicateWarning != null) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("banner_duplicate_warning"),
+                shape = RoundedCornerShape(10.dp),
+                color = Color(0xFFFFFBEB),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFBBF24))
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Info, contentDescription = null, tint = Color(0xFFB45309), modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "Attendance Previously Recorded",
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF92400E)
+                        )
+                        Text(
+                            text = "${state.duplicateWarning}. Saving new entries will atomically update this register.",
+                            fontSize = 10.sp,
+                            color = Color(0xFF78350F)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Outbox Offline / Sync Pending Ribbon
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("ribbon_outbox_sync_status"),
+            shape = RoundedCornerShape(8.dp),
+            color = if (state.pendingOutboxCount > 0) Color(0xFFEFF6FF) else Color(0xFFF8FAFC),
+            border = androidx.compose.foundation.BorderStroke(1.dp, if (state.pendingOutboxCount > 0) Color(0xFF93C5FD) else GovBorderGrey)
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Icon(
+                        imageVector = Icons.Default.Storage,
+                        contentDescription = null,
+                        tint = if (state.pendingOutboxCount > 0) Color(0xFF1D4ED8) else GovSlateMuted,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (state.isSyncingOutbox) {
+                            "Syncing changes with Firestore..."
+                        } else if (state.pendingOutboxCount > 0) {
+                            "${state.pendingOutboxCount} attendance events pending cloud sync in Room"
+                        } else if (state.isAlreadyRecorded) {
+                            "Local register synchronized with central cloud"
+                        } else {
+                            "Local offline Room outbox active • No pending sync"
+                        },
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = if (state.pendingOutboxCount > 0) Color(0xFF1E40AF) else GovSlateMuted
+                    )
+                }
+
+                if (state.pendingOutboxCount > 0 && !state.isSyncingOutbox) {
+                    TextButton(
+                        onClick = { viewModel.triggerCloudSync() },
+                        modifier = Modifier.testTag("btn_trigger_outbox_sync")
+                    ) {
+                        Text("Sync Now", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D4ED8))
+                    }
+                } else if (state.isSyncingOutbox) {
+                    CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp, color = Color(0xFF1D4ED8))
+                }
+            }
+        }
+
+        // Validation Error Banner
+        state.validationError?.let { vErr ->
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("banner_validation_error"),
+                shape = RoundedCornerShape(8.dp),
+                color = Color(0xFFFEE2E2),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFCA5A5))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Info, contentDescription = null, tint = GovRedAlert, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = vErr, fontSize = 11.sp, color = Color(0xFF991B1B), fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+
         // Feedback Banner (Success / Error)
         state.feedbackMessage?.let { msg ->
             Surface(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("banner_feedback_success"),
                 shape = RoundedCornerShape(8.dp),
                 color = Color(0xFFDCFCE7),
                 border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF86EFAC))
@@ -232,7 +377,9 @@ fun DailyAttendanceRecorder(
 
         state.errorMessage?.let { err ->
             Surface(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("banner_feedback_error"),
                 shape = RoundedCornerShape(8.dp),
                 color = Color(0xFFFEE2E2),
                 border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFCA5A5))
@@ -309,6 +456,7 @@ fun DailyAttendanceRecorder(
         // Bottom Fixed / Floating Action: Save to Room DB & WhatsApp Push
         SaveAttendanceActionBar(
             state = state,
+            onReview = { viewModel.setReviewMode(true) },
             onSave = {
                 viewModel.saveDailyAttendance { success, msg ->
                     if (success) {
@@ -320,6 +468,24 @@ fun DailyAttendanceRecorder(
                 }
             },
             onOpenWhatsAppPush = { viewModel.openWhatsAppPushSheet() }
+        )
+    }
+
+    // Attendance Review Mode Modal
+    if (state.isReviewMode) {
+        AttendanceReviewDialog(
+            state = state,
+            onDismiss = { viewModel.setReviewMode(false) },
+            onConfirm = {
+                viewModel.saveDailyAttendance { success, msg ->
+                    if (success) {
+                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                        onSaveSuccess(msg)
+                    } else {
+                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
         )
     }
 
@@ -1010,6 +1176,7 @@ private fun StatusPill(
 @Composable
 private fun SaveAttendanceActionBar(
     state: TeacherAttendanceUiState,
+    onReview: () -> Unit,
     onSave: () -> Unit,
     onOpenWhatsAppPush: () -> Unit
 ) {
@@ -1034,13 +1201,24 @@ private fun SaveAttendanceActionBar(
                         color = GovNavyDark
                     )
                     Text(
-                        text = "Direct writes to SQLite/Room database table 'attendance'",
+                        text = "Atomic write to local Room DB & durable outbox queue",
                         fontSize = 10.sp,
                         color = GovSlateMuted
                     )
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    // Review entries button
+                    OutlinedButton(
+                        onClick = onReview,
+                        enabled = !state.isSaving && state.isAuthorizedToMark && state.roster.isNotEmpty(),
+                        modifier = Modifier.testTag("btn_review_attendance")
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Review", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+
                     if (FeatureAvailability.isWhatsAppEnabled) {
                         Surface(
                             modifier = Modifier
@@ -1057,7 +1235,7 @@ private fun SaveAttendanceActionBar(
                                 Icon(Icons.Default.Chat, contentDescription = null, tint = Color(0xFF25D366), modifier = Modifier.size(15.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = "WhatsApp Push",
+                                    text = "WhatsApp",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFF15803D)
@@ -1069,6 +1247,7 @@ private fun SaveAttendanceActionBar(
                     GlassButton(
                         text = if (state.isSaving) "Saving..." else "Save Attendance",
                         onClick = onSave,
+                        enabled = !state.isSaving && state.isAuthorizedToMark && state.roster.isNotEmpty(),
                         color = GovGreen,
                         leadingIcon = {
                             if (state.isSaving) {
@@ -1084,3 +1263,158 @@ private fun SaveAttendanceActionBar(
         }
     }
 }
+
+@Composable
+fun AttendanceReviewDialog(
+    state: TeacherAttendanceUiState,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    val summary = state.summary
+    val absentStudents = state.roster.filter { it.status == "ABSENT" }
+    val lateStudents = state.roster.filter { it.status == "LATE" }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = GovNavyPrimary, modifier = Modifier.size(22.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Review Attendance Entries",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = GovNavyDark
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "Class ${state.selectedClass} • ${state.selectedDate} • ${state.selectedSession}",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = GovSlateDark
+                )
+
+                state.duplicateWarning?.let { dup ->
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFFFEF3C7),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFDE68A))
+                    ) {
+                        Row(modifier = Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Info, contentDescription = null, tint = Color(0xFFB45309), modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(text = dup, fontSize = 11.sp, color = Color(0xFF92400E), fontWeight = FontWeight.Medium)
+                        }
+                    }
+                }
+
+                // Summary Counters
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFFF8FAFC),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(10.dp),
+                        horizontalArrangement = Arrangement.SpaceAround
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(text = "${summary.presentCount}", fontSize = 16.sp, fontWeight = FontWeight.Black, color = GovGreen)
+                            Text(text = "Present", fontSize = 10.sp, color = GovSlateMuted)
+                        }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(text = "${summary.absentCount}", fontSize = 16.sp, fontWeight = FontWeight.Black, color = GovRedAlert)
+                            Text(text = "Absent", fontSize = 10.sp, color = GovSlateMuted)
+                        }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(text = "${summary.lateCount}", fontSize = 16.sp, fontWeight = FontWeight.Black, color = GovSaffron)
+                            Text(text = "Late", fontSize = 10.sp, color = GovSlateMuted)
+                        }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(text = "${summary.leaveCount}", fontSize = 16.sp, fontWeight = FontWeight.Black, color = Color(0xFF7C3AED))
+                            Text(text = "Leave", fontSize = 10.sp, color = GovSlateMuted)
+                        }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(text = "${summary.attendancePercentage}%", fontSize = 16.sp, fontWeight = FontWeight.Black, color = GovNavyPrimary)
+                            Text(text = "Turnout", fontSize = 10.sp, color = GovSlateMuted)
+                        }
+                    }
+                }
+
+                // Callout for Absent Students
+                if (absentStudents.isNotEmpty()) {
+                    Text(
+                        text = "Marked Absent (${absentStudents.size}):",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = GovRedAlert
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        absentStudents.forEach { st ->
+                            Text(
+                                text = "• Roll #${st.rollNumber} - ${st.studentName}${if (st.remarks.isNotBlank()) " (${st.remarks})" else ""}",
+                                fontSize = 11.sp,
+                                color = Color(0xFF7F1D1D)
+                            )
+                        }
+                    }
+                }
+
+                // Callout for Late Students
+                if (lateStudents.isNotEmpty()) {
+                    Text(
+                        text = "Marked Late (${lateStudents.size}):",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = GovSaffron
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        lateStudents.forEach { st ->
+                            Text(
+                                text = "• Roll #${st.rollNumber} - ${st.studentName}${if (st.remarks.isNotBlank()) " (${st.remarks})" else ""}",
+                                fontSize = 11.sp,
+                                color = Color(0xFF78350F)
+                            )
+                        }
+                    }
+                }
+
+                Text(
+                    text = "Saving commits these records atomically to SQLite and enqueues a durable outbox event for cloud synchronization.",
+                    fontSize = 10.5.sp,
+                    color = GovSlateMuted
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                colors = ButtonDefaults.buttonColors(containerColor = GovGreen),
+                modifier = Modifier.testTag("btn_review_confirm_save")
+            ) {
+                Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Confirm & Save Attendance", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            OutlinedButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("btn_review_dismiss")
+            ) {
+                Text("Edit Entries", fontSize = 11.5.sp)
+            }
+        }
+    )
+}
+

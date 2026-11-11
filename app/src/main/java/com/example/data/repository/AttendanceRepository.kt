@@ -43,6 +43,8 @@ interface AttendanceRepository {
     fun observeRegisterBatches(): Flow<List<RegisterScanBatchEntity>>
 
     suspend fun getAttendanceForClassAndDate(classSection: String, date: String): List<AttendanceEntity>
+    suspend fun getAttendanceForClassDateAndSession(classSection: String, date: String, session: String): List<AttendanceEntity>
+    suspend fun isTeacherAssignedToClass(teacherId: String, classSection: String): Boolean
     suspend fun saveDailyAttendanceBatch(
         classSection: String,
         date: String,
@@ -145,16 +147,136 @@ class AttendanceRepositoryImpl @Inject constructor(
         dao.getAttendanceForClassAndDate(classSection.trim(), date.trim())
     }
 
+    override suspend fun getAttendanceForClassDateAndSession(
+        classSection: String,
+        date: String,
+        session: String
+    ): List<AttendanceEntity> = withContext(Dispatchers.IO) {
+        dao.getAttendanceForClassDateAndSession(classSection.trim(), date.trim(), session.trim())
+    }
+
+    override suspend fun isTeacherAssignedToClass(
+        teacherId: String,
+        classSection: String
+    ): Boolean = withContext(Dispatchers.IO) {
+        val clean = classSection.trim()
+        val parts = clean.split("-")
+        val gradePart = parts.getOrNull(0) ?: clean
+        val sectionPart = parts.getOrNull(1) ?: "A"
+
+        // 1. Check in academic_classes
+        val classes = dao.getAllClassesList()
+        val isClassTeacher = classes.any { c ->
+            val matchSection = c.section.equals(sectionPart, ignoreCase = true)
+            val matchGrade = c.className.contains(gradePart, ignoreCase = true) ||
+                    c.classId.contains(clean.replace("-", ""), ignoreCase = true)
+            matchGrade && matchSection && c.classTeacherId == teacherId
+        }
+        if (isClassTeacher) return@withContext true
+
+        // 2. Check in staff_members
+        val staff = dao.getStaffById(teacherId)
+        if (staff != null && staff.isClassIncharge && !staff.inchargeClass.isNullOrBlank()) {
+            if (staff.inchargeClass.equals(clean, ignoreCase = true)) return@withContext true
+        }
+
+        // 3. Check in teachers
+        val teacher = dao.getTeacherById(teacherId)
+        if (teacher != null && teacher.isClassIncharge && !teacher.inchargeClassSection.isNullOrBlank()) {
+            if (teacher.inchargeClassSection.equals(clean, ignoreCase = true)) return@withContext true
+        }
+
+        false
+    }
+
     override suspend fun saveDailyAttendanceBatch(
         classSection: String,
         date: String,
         attendances: List<AttendanceEntity>,
         updateStudentPercentages: Boolean
     ) = withContext(Dispatchers.IO) {
+        val cleanClass = classSection.trim()
+        val cleanDate = date.trim()
+
+        // 1. Validate non-empty roster
+        if (attendances.isEmpty()) {
+            throw IllegalArgumentException("Validation error: Attendance roster cannot be empty.")
+        }
+
+        // 2. Validate attendance statuses (PRESENT, ABSENT, LATE, or LEAVE)
+        val validStatuses = setOf("PRESENT", "ABSENT", "LATE", "LEAVE")
+        for (att in attendances) {
+            val statusUpper = att.status.trim().uppercase()
+            if (statusUpper !in validStatuses) {
+                throw IllegalArgumentException(
+                    "Validation error: Invalid status '${att.status}' for student '${att.studentName}'. Status must be Present, Absent, or Late."
+                )
+            }
+        }
+
+        // 3. Enforce Tenant Isolation
         val resolvedTenant = resolveAuthenticatedTenant(attendances.firstOrNull()?.institutionId)
 
+        // 4. Enforce Role Permissions and Class Assignment Authorization
+        val activeClaims = TenantSecurityContext.getCurrentClaims()
+            ?: com.example.security.SecureSessionManager.getActiveSession()?.claims
+
+        if (activeClaims != null) {
+            val role = activeClaims.role
+            val isSystemAdmin = role in setOf(
+                com.example.data.model.UserRole.ADMIN,
+                com.example.data.model.UserRole.PRINCIPAL,
+                com.example.data.model.UserRole.VICE_PRINCIPAL
+            )
+            val isTeacherOrIncharge = role in setOf(
+                com.example.data.model.UserRole.TEACHER,
+                com.example.data.model.UserRole.TEACHING,
+                com.example.data.model.UserRole.INCHARGE
+            )
+
+            if (!isSystemAdmin && !isTeacherOrIncharge && !activeClaims.hasPermission(com.example.data.model.SchoolPermissions.MARK_ATTENDANCE_SECTION)) {
+                throw SecurityException("Unauthorized: User role '${role.name}' does not have permission to mark attendance.")
+            }
+
+            if (isTeacherOrIncharge && !isSystemAdmin) {
+                val assignedSection = activeClaims.assignedClassSection
+                val isAssigned = (assignedSection != null && assignedSection.equals(cleanClass, ignoreCase = true)) ||
+                        isTeacherAssignedToClass(activeClaims.userId, cleanClass)
+
+                if (!isAssigned) {
+                    throw SecurityException(
+                        "Access Denied: Faculty member '${activeClaims.displayName}' is not assigned to class '$cleanClass'. Only assigned teachers or administrators can record attendance."
+                    )
+                }
+            }
+        }
+
+        // 5. Validate Student Membership
+        val classParts = cleanClass.split("-")
+        val expectedGrade = classParts.getOrNull(0)?.trim() ?: cleanClass
+        val expectedSection = classParts.getOrNull(1)?.trim() ?: "A"
+
+        for (att in attendances) {
+            val student = dao.getStudentById(att.studentId)
+            if (student != null) {
+                val gradeMatches = student.grade.equals(expectedGrade, ignoreCase = true) ||
+                        student.grade.contains(expectedGrade, ignoreCase = true)
+                val sectionMatches = student.section.equals(expectedSection, ignoreCase = true)
+                if (!gradeMatches || !sectionMatches) {
+                    throw IllegalArgumentException(
+                        "Student membership validation error: Student '${student.name}' (${student.id}) is enrolled in ${student.grade}-${student.section}, not in class '$cleanClass'."
+                    )
+                }
+            }
+        }
+
         val tenantAttendances = attendances.map { att ->
-            if (att.institutionId != resolvedTenant) att.copy(institutionId = resolvedTenant) else att
+            att.copy(
+                institutionId = resolvedTenant,
+                classSection = cleanClass,
+                date = cleanDate,
+                status = att.status.trim().uppercase()
+            )
         }
 
         // Prepare mirrored records with isSyncedToCentral = false (pending cloud sync)
@@ -168,8 +290,8 @@ class AttendanceRepositoryImpl @Inject constructor(
                 status = att.status,
                 timeMarked = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(att.dateTimestamp)),
                 remarks = att.remarks,
-                markedByRole = "TEACHER",
-                markedByName = "Faculty In-Charge",
+                markedByRole = activeClaims?.role?.name ?: "TEACHER",
+                markedByName = activeClaims?.displayName ?: "Faculty In-Charge",
                 classSection = att.classSection,
                 sessionType = att.session,
                 sourceMethod = "DAILY_ATTENDANCE_UI",
@@ -209,8 +331,8 @@ class AttendanceRepositoryImpl @Inject constructor(
 
         // Commit atomically to Room: deletion, batch insert, records, and outbox queue in one transaction
         dao.saveDailyAttendanceBatchWithOutbox(
-            classSection = classSection.trim(),
-            date = date.trim(),
+            classSection = cleanClass,
+            date = cleanDate,
             attendances = tenantAttendances,
             records = recordEntities,
             outboxItems = outboxItems

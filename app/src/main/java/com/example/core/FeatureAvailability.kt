@@ -34,12 +34,12 @@ object FeatureAvailability {
         AppFeature.DAILY_ATTENDANCE to true,
         AppFeature.FEE_RECEIPTS to true,
 
-        AppFeature.WHATSAPP_AUTOMATION to false,
-        AppFeature.EXAM_RESULTS to false,
-        AppFeature.SECURITY_AUDIT_LOGS to false,
-        AppFeature.PAYMENT_SANDBOX to false,
-        AppFeature.AI_ACADEMIC_TOOLS to false,
-        AppFeature.TRANSPORT_OPERATIONS to false
+        AppFeature.WHATSAPP_AUTOMATION to true,
+        AppFeature.EXAM_RESULTS to true,
+        AppFeature.SECURITY_AUDIT_LOGS to true,
+        AppFeature.PAYMENT_SANDBOX to true,
+        AppFeature.AI_ACADEMIC_TOOLS to true,
+        AppFeature.TRANSPORT_OPERATIONS to true
     )
 
     fun isEnabled(feature: AppFeature): Boolean {

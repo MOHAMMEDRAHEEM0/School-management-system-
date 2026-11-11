@@ -111,8 +111,14 @@ interface SchoolDao {
     @Query("SELECT * FROM academic_classes WHERE isArchived = 0 ORDER BY className ASC, section ASC")
     fun getAllClasses(): Flow<List<AcademicClassEntity>>
 
+    @Query("SELECT * FROM academic_classes WHERE isArchived = 0 ORDER BY className ASC, section ASC")
+    suspend fun getAllClassesList(): List<AcademicClassEntity>
+
     @Query("SELECT * FROM academic_classes WHERE institutionId = :institutionId AND isArchived = 0 ORDER BY className ASC, section ASC")
     fun getClassesForInstitution(institutionId: String): Flow<List<AcademicClassEntity>>
+
+    @Query("SELECT * FROM academic_classes WHERE institutionId = :institutionId AND isArchived = 0 ORDER BY className ASC, section ASC")
+    suspend fun getClassesListForInstitution(institutionId: String): List<AcademicClassEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAcademicClass(academicClass: AcademicClassEntity)
@@ -128,6 +134,9 @@ interface SchoolDao {
     // =========================================================================
     @Query("SELECT * FROM staff_members ORDER BY roleType ASC, name ASC")
     fun getAllStaff(): Flow<List<StaffEntity>>
+
+    @Query("SELECT * FROM staff_members")
+    suspend fun getAllStaffList(): List<StaffEntity>
 
     @Query("SELECT * FROM staff_members WHERE institutionId = :institutionId ORDER BY roleType ASC, name ASC")
     fun getStaffForInstitution(institutionId: String): Flow<List<StaffEntity>>
@@ -241,8 +250,14 @@ interface SchoolDao {
     @Query("SELECT * FROM attendance WHERE classSection = :classSection AND date = :date")
     suspend fun getAttendanceForClassAndDate(classSection: String, date: String): List<AttendanceEntity>
 
+    @Query("SELECT * FROM attendance WHERE classSection = :classSection AND date = :date AND session = :session")
+    suspend fun getAttendanceForClassDateAndSession(classSection: String, date: String, session: String): List<AttendanceEntity>
+
     @Query("DELETE FROM attendance WHERE classSection = :classSection AND date = :date")
     suspend fun deleteAttendanceForClassAndDate(classSection: String, date: String)
+
+    @Query("DELETE FROM attendance WHERE classSection = :classSection AND date = :date AND session = :session")
+    suspend fun deleteAttendanceForClassDateAndSession(classSection: String, date: String, session: String)
 
     @Query("SELECT * FROM attendance WHERE dateTimestamp BETWEEN :startEpochMs AND :endEpochMs ORDER BY dateTimestamp DESC")
     fun getAttendanceInRange(startEpochMs: Long, endEpochMs: Long): Flow<List<AttendanceEntity>>
@@ -264,6 +279,9 @@ interface SchoolDao {
 
     @Query("SELECT * FROM attendance_records WHERE classSection = :classSection ORDER BY recordId DESC")
     fun getAttendanceForClass(classSection: String): Flow<List<AttendanceRecordEntity>>
+
+    @Query("UPDATE attendance_records SET isSyncedToCentral = 1 WHERE classSection = :classSection AND date = :date AND personId = :personId")
+    suspend fun markAttendanceRecordSynced(classSection: String, date: String, personId: String)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAttendanceRecord(record: AttendanceRecordEntity)
@@ -574,6 +592,9 @@ interface SchoolDao {
     @Query("SELECT * FROM users ORDER BY displayName ASC")
     fun getAllUsers(): Flow<List<UserEntity>>
 
+    @Query("SELECT * FROM users")
+    suspend fun getUsersList(): List<UserEntity>
+
     @Query("SELECT * FROM users WHERE id = :userId LIMIT 1")
     suspend fun getUserById(userId: String): UserEntity?
 
@@ -712,6 +733,21 @@ interface SchoolDao {
         outboxItems: List<DurableOutboxEntity>
     ) {
         deleteAttendanceForClassAndDate(classSection.trim(), date.trim())
+        insertAttendanceList(attendances)
+        insertAttendanceRecords(records)
+        insertOutboxItems(outboxItems)
+    }
+
+    @Transaction
+    suspend fun saveDailyAttendanceSessionBatchWithOutbox(
+        classSection: String,
+        date: String,
+        session: String,
+        attendances: List<AttendanceEntity>,
+        records: List<AttendanceRecordEntity>,
+        outboxItems: List<DurableOutboxEntity>
+    ) {
+        deleteAttendanceForClassDateAndSession(classSection.trim(), date.trim(), session.trim())
         insertAttendanceList(attendances)
         insertAttendanceRecords(records)
         insertOutboxItems(outboxItems)

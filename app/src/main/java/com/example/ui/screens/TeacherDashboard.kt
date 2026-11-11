@@ -71,6 +71,8 @@ import com.example.ui.components.DailyAttendanceRecorder
 import com.example.ui.components.DynamicTimetablePeriodTracker
 import com.example.ui.components.GeminiAiExamBuilderModal
 import com.example.ui.components.GeminiAiPredictiveAnalyticsDeck
+import com.example.ui.components.InchargeLeaveApprovalDeck
+import com.example.ui.components.SchoolCircularNoticeBoard
 import com.example.ui.components.GlassBadge
 import com.example.ui.components.GlassButton
 import com.example.ui.components.GlassCard
@@ -279,6 +281,16 @@ fun TeacherDashboard(
                     selected = selectedTab == 5,
                     onClick = { selectedTab = 5 },
                     text = { Text("Parent Messages", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
+                )
+                Tab(
+                    selected = selectedTab == 6,
+                    onClick = { selectedTab = 6 },
+                    text = { Text("Leave Requests", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
+                )
+                Tab(
+                    selected = selectedTab == 7,
+                    onClick = { selectedTab = 7 },
+                    text = { Text("Notice Board", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
                 )
             }
         }
@@ -542,6 +554,22 @@ fun TeacherDashboard(
                 parentName = "Aarav Sharma's Guardian",
                 inchargeName = "Dr. Meenakshi Sundaram (Faculty)"
             )
+        }
+
+        // =====================================================================
+        // TAB 6: STUDENT LEAVE REQUESTS DESK
+        // =====================================================================
+        if (selectedTab == 6) {
+            InchargeLeaveApprovalDeck(
+                classSection = "10-A"
+            )
+        }
+
+        // =====================================================================
+        // TAB 7: CAMPUS CIRCULARS & NOTICES
+        // =====================================================================
+        if (selectedTab == 7) {
+            SchoolCircularNoticeBoard()
         }
     }
 
