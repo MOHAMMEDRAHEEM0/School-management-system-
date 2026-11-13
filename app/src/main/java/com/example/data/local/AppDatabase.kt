@@ -148,7 +148,7 @@ import kotlinx.coroutines.launch
         FinancialLedgerEntryEntity::class,
         AutomatedMessageDispatchEntity::class
     ],
-    version = 10,
+    version = 12,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -169,6 +169,34 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_10_11 = object : androidx.room.migration.Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_fee_records_institutionId_studentId` ON `fee_records` (`institutionId`, `studentId`)")
+                db.execSQL("ALTER TABLE `fee_payment_transactions` ADD COLUMN `recordedByUserId` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `fee_payment_transactions` ADD COLUMN `recordedByRole` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `fee_payment_transactions` ADD COLUMN `verificationSource` TEXT NOT NULL DEFAULT 'MANUAL_RECORDED'")
+                db.execSQL("ALTER TABLE `fee_payment_transactions` ADD COLUMN `idempotencyKey` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `fee_payment_transactions` ADD COLUMN `syncStatus` TEXT NOT NULL DEFAULT 'PENDING_SYNC'")
+                db.execSQL("ALTER TABLE `fee_payment_transactions` ADD COLUMN `isSyncedToCentral` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `fee_payment_transactions` ADD COLUMN `serverAckToken` TEXT")
+                db.execSQL("ALTER TABLE `fee_payment_transactions` ADD COLUMN `remarks` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("UPDATE `fee_payment_transactions` SET `idempotencyKey` = `transactionId` WHERE `idempotencyKey` = ''")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_fee_payment_transactions_receiptNumber` ON `fee_payment_transactions` (`receiptNumber`)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_fee_payment_transactions_idempotencyKey` ON `fee_payment_transactions` (`idempotencyKey`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_fee_payment_transactions_institutionId_studentId_feeRecordId` ON `fee_payment_transactions` (`institutionId`, `studentId`, `feeRecordId`)")
+            }
+        }
+
+        val MIGRATION_11_12 = object : androidx.room.migration.Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_users_institutionId` ON `users` (`institutionId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_students_institutionId` ON `students` (`institutionId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_staff_members_institutionId` ON `staff_members` (`institutionId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_attendance_institutionId` ON `attendance` (`institutionId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_durable_outbox_institutionId` ON `durable_outbox` (`institutionId`)")
+            }
+        }
+
         fun getDatabase(
             context: Context,
             scope: CoroutineScope = CoroutineScope(Dispatchers.IO)
@@ -179,7 +207,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "st_xaviers_sms_master.db"
                 )
-                    .addMigrations(MIGRATION_9_10)
+                    .addMigrations(MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
                     .fallbackToDestructiveMigrationOnDowngrade()
                     .addCallback(DatabaseCallback(scope))
                     .build()
@@ -752,6 +780,76 @@ abstract class AppDatabase : RoomDatabase() {
                     )
                 )
                 dao.insertFeeRecords(initialFees)
+
+                val seedPaymentTxns = listOf(
+                    FeePaymentTransactionEntity(
+                        transactionId = "TXN-SXA-SEED-9901",
+                        institutionId = "INST-SXA-2026",
+                        feeRecordId = "FEE-2026-001",
+                        studentId = "ADM-2026-001",
+                        studentName = "Aarav Sharma",
+                        amountPaidPaise = 6500000L,
+                        paymentMode = "BANK_TRANSFER",
+                        transactionReference = "NEFT-SXA-2026-9901",
+                        receiptNumber = "SXA-REC-2026-9901",
+                        timestamp = 1785888000000L,
+                        cashierName = "Ramesh Kulkarni",
+                        status = FeePaymentTransactionEntity.STATUS_RECORDED_MANUAL,
+                        recordedByUserId = "USR-ACC-01",
+                        recordedByRole = "ACCOUNTANT",
+                        verificationSource = FeePaymentTransactionEntity.SOURCE_MANUAL_RECORDED,
+                        idempotencyKey = "SEED-TXN-SXA-9901",
+                        syncStatus = FeePaymentTransactionEntity.SYNC_SYNCED,
+                        isSyncedToCentral = true,
+                        serverAckToken = "ACK-SEED-9901",
+                        remarks = "Initial Term 1 settlement (pre-seeded institutional ledger)"
+                    ),
+                    FeePaymentTransactionEntity(
+                        transactionId = "TXN-SXA-SEED-9902",
+                        institutionId = "INST-SXA-2026",
+                        feeRecordId = "FEE-2026-002",
+                        studentId = "ADM-2026-002",
+                        studentName = "Ananya Iyer",
+                        amountPaidPaise = 6500000L,
+                        paymentMode = "BANK_TRANSFER",
+                        transactionReference = "NEFT-SXA-2026-9902",
+                        receiptNumber = "SXA-REC-2026-9902",
+                        timestamp = 1785801600000L,
+                        cashierName = "Ramesh Kulkarni",
+                        status = FeePaymentTransactionEntity.STATUS_RECORDED_MANUAL,
+                        recordedByUserId = "USR-ACC-01",
+                        recordedByRole = "ACCOUNTANT",
+                        verificationSource = FeePaymentTransactionEntity.SOURCE_MANUAL_RECORDED,
+                        idempotencyKey = "SEED-TXN-SXA-9902",
+                        syncStatus = FeePaymentTransactionEntity.SYNC_SYNCED,
+                        isSyncedToCentral = true,
+                        serverAckToken = "ACK-SEED-9902",
+                        remarks = "Initial Term 1 settlement (pre-seeded institutional ledger)"
+                    ),
+                    FeePaymentTransactionEntity(
+                        transactionId = "TXN-SXA-SEED-9903",
+                        institutionId = "INST-SXA-2026",
+                        feeRecordId = "FEE-2026-003",
+                        studentId = "ADM-2026-004",
+                        studentName = "Kabir Patel",
+                        amountPaidPaise = 5000000L,
+                        paymentMode = "CASH",
+                        transactionReference = "COUNTER-CASH-9903",
+                        receiptNumber = "SXA-REC-2026-9903",
+                        timestamp = 1786320000000L,
+                        cashierName = "Ramesh Kulkarni",
+                        status = FeePaymentTransactionEntity.STATUS_RECORDED_MANUAL,
+                        recordedByUserId = "USR-ACC-01",
+                        recordedByRole = "ACCOUNTANT",
+                        verificationSource = FeePaymentTransactionEntity.SOURCE_MANUAL_RECORDED,
+                        idempotencyKey = "SEED-TXN-SXA-9903",
+                        syncStatus = FeePaymentTransactionEntity.SYNC_SYNCED,
+                        isSyncedToCentral = true,
+                        serverAckToken = "ACK-SEED-9903",
+                        remarks = "Initial partial installment 1 (pre-seeded institutional ledger)"
+                    )
+                )
+                dao.insertPaymentTransactions(seedPaymentTxns)
 
                 // 8. Pre-fed Timetable Slots (Class 10-A)
                 val initialTimetable = listOf(

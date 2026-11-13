@@ -104,10 +104,6 @@ fun InchargeDashboard(
     var requestNewValue by remember { mutableStateOf("") }
     var requestReason by remember { mutableStateOf("") }
 
-    // Fee Collection Dialog State
-    var payingStudent by remember { mutableStateOf<StudentEntity?>(null) }
-    var feeAmountPaid by remember { mutableStateOf("15000") }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -435,19 +431,6 @@ fun InchargeDashboard(
                                         Icon(Icons.Default.Edit, contentDescription = null, tint = GovNavyPrimary, modifier = Modifier.size(13.dp))
                                     }
                                 )
-
-                                GlassButton(
-                                    text = "Record Fee",
-                                    onClick = {
-                                        payingStudent = student
-                                        feeAmountPaid = if (student.feeDue > 0) student.feeDue.toLong().toString() else "65000"
-                                    },
-                                    color = GovGreen,
-                                    modifier = Modifier.weight(1f),
-                                    leadingIcon = {
-                                        Icon(Icons.Default.Payment, contentDescription = null, tint = PureWhite, modifier = Modifier.size(13.dp))
-                                    }
-                                )
                             }
                         }
                     }
@@ -468,9 +451,9 @@ fun InchargeDashboard(
                 )
 
                 feeRecords.forEach { fee ->
-                    val displayTotal = if (fee.totalAmount >= 100000L) fee.totalAmount / 100L else fee.totalAmount
-                    val displayPaid = if (fee.paidAmount >= 100000L) fee.paidAmount / 100L else fee.paidAmount
-                    val displayDue = if (fee.dueAmount >= 100000L) fee.dueAmount / 100L else fee.dueAmount
+                    val displayTotal = fee.totalRupees
+                    val displayPaid = fee.paidRupees
+                    val displayDue = fee.dueRupees
 
                     GlassCard(
                         modifier = Modifier.fillMaxWidth(),
@@ -491,13 +474,13 @@ fun InchargeDashboard(
                                     color = GovSlateDark
                                 )
                                 Text(
-                                    text = "Total:  $displayTotal | Paid:  $displayPaid",
+                                    text = "Total: ₹$displayTotal | Paid: ₹$displayPaid",
                                     fontSize = 10.sp,
                                     color = GovSlateMuted
                                 )
                                 if (displayDue > 0) {
                                     Text(
-                                        text = "Outstanding Due:  $displayDue",
+                                        text = "Outstanding Due: ₹$displayDue (Managed by Accountant Desk)",
                                         fontSize = 10.5.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = GovRedAlert
@@ -619,51 +602,6 @@ fun InchargeDashboard(
                 GlassOutlinedButton(
                     text = "Cancel",
                     onClick = { editingStudent = null }
-                )
-            }
-        )
-    }
-
-    // Fee Collection Dialog
-    if (payingStudent != null) {
-        val stu = payingStudent!!
-        AlertDialog(
-            onDismissRequest = { payingStudent = null },
-            title = {
-                Text("Record Offline Fee Collection", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Student: ${stu.name} (Roll #${stu.rollNumber})", fontSize = 11.sp, color = GovSlateMuted)
-                    GlassTextField(
-                        value = feeAmountPaid,
-                        onValueChange = { feeAmountPaid = it },
-                        placeholder = "Amount in Rupees",
-                        label = "Collected Amount ()"
-                    )
-                }
-            },
-            confirmButton = {
-                GlassButton(
-                    text = "Generate Official Receipt",
-                    onClick = {
-                        val amount = feeAmountPaid.toLongOrNull() ?: 15000L
-                        val receiptNo = "SXA-REC-2026-${(8000..9999).random()}"
-                        viewModel.inchargeRecordFeePayment(
-                            feeId = "FEE-2026-003",
-                            paidAmount = amount,
-                            dueAmount = 0L,
-                            receiptNo = receiptNo
-                        )
-                        Toast.makeText(context, "Payment recorded! Official Receipt generated: $receiptNo", Toast.LENGTH_LONG).show()
-                        payingStudent = null
-                    }
-                )
-            },
-            dismissButton = {
-                GlassOutlinedButton(
-                    text = "Cancel",
-                    onClick = { payingStudent = null }
                 )
             }
         )

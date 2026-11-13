@@ -140,11 +140,21 @@ class AttendanceRepositoryImpl @Inject constructor(
         )
     }
 
+    private fun currentSessionTenantOrNull(): String? {
+        return TenantSecurityContext.getActiveTenantIdOrNull()
+            ?: com.example.security.SecureSessionManager.getActiveSession()?.institutionId
+    }
+
     override suspend fun getAttendanceForClassAndDate(
         classSection: String,
         date: String
     ): List<AttendanceEntity> = withContext(Dispatchers.IO) {
-        dao.getAttendanceForClassAndDate(classSection.trim(), date.trim())
+        val tenant = currentSessionTenantOrNull()
+        if (tenant != null) {
+            dao.getAttendanceForClassAndDateInTenant(tenant, classSection.trim(), date.trim())
+        } else {
+            dao.getAttendanceForClassAndDate(classSection.trim(), date.trim())
+        }
     }
 
     override suspend fun getAttendanceForClassDateAndSession(
@@ -152,7 +162,12 @@ class AttendanceRepositoryImpl @Inject constructor(
         date: String,
         session: String
     ): List<AttendanceEntity> = withContext(Dispatchers.IO) {
-        dao.getAttendanceForClassDateAndSession(classSection.trim(), date.trim(), session.trim())
+        val tenant = currentSessionTenantOrNull()
+        if (tenant != null) {
+            dao.getAttendanceForClassDateAndSessionInTenant(tenant, classSection.trim(), date.trim(), session.trim())
+        } else {
+            dao.getAttendanceForClassDateAndSession(classSection.trim(), date.trim(), session.trim())
+        }
     }
 
     override suspend fun isTeacherAssignedToClass(
@@ -163,9 +178,14 @@ class AttendanceRepositoryImpl @Inject constructor(
         val parts = clean.split("-")
         val gradePart = parts.getOrNull(0) ?: clean
         val sectionPart = parts.getOrNull(1) ?: "A"
+        val tenant = currentSessionTenantOrNull()
 
-        // 1. Check in academic_classes
-        val classes = dao.getAllClassesList()
+        // 1. Check in academic_classes (tenant-scoped when session is active)
+        val classes = if (tenant != null) {
+            dao.getClassesListForInstitution(tenant)
+        } else {
+            dao.getAllClassesList()
+        }
         val isClassTeacher = classes.any { c ->
             val matchSection = c.section.equals(sectionPart, ignoreCase = true)
             val matchGrade = c.className.contains(gradePart, ignoreCase = true) ||
@@ -174,15 +194,17 @@ class AttendanceRepositoryImpl @Inject constructor(
         }
         if (isClassTeacher) return@withContext true
 
-        // 2. Check in staff_members
+        // 2. Check in staff_members (respecting tenant boundary)
         val staff = dao.getStaffById(teacherId)
-        if (staff != null && staff.isClassIncharge && !staff.inchargeClass.isNullOrBlank()) {
+        if (staff != null && (tenant == null || staff.institutionId == tenant) &&
+            staff.isClassIncharge && !staff.inchargeClass.isNullOrBlank()) {
             if (staff.inchargeClass.equals(clean, ignoreCase = true)) return@withContext true
         }
 
-        // 3. Check in teachers
+        // 3. Check in teachers (respecting tenant boundary)
         val teacher = dao.getTeacherById(teacherId)
-        if (teacher != null && teacher.isClassIncharge && !teacher.inchargeClassSection.isNullOrBlank()) {
+        if (teacher != null && (tenant == null || teacher.institutionId == tenant) &&
+            teacher.isClassIncharge && !teacher.inchargeClassSection.isNullOrBlank()) {
             if (teacher.inchargeClassSection.equals(clean, ignoreCase = true)) return@withContext true
         }
 
@@ -259,6 +281,11 @@ class AttendanceRepositoryImpl @Inject constructor(
         for (att in attendances) {
             val student = dao.getStudentById(att.studentId)
             if (student != null) {
+                if (student.institutionId != resolvedTenant) {
+                    throw com.example.security.TenantSecurityException(
+                        "Cross-tenant access violation: Student '${student.name}' (${student.id}) belongs to '${student.institutionId}', cannot mark attendance in tenant '$resolvedTenant'."
+                    )
+                }
                 val gradeMatches = student.grade.equals(expectedGrade, ignoreCase = true) ||
                         student.grade.contains(expectedGrade, ignoreCase = true)
                 val sectionMatches = student.section.equals(expectedSection, ignoreCase = true)
@@ -288,7 +315,7 @@ class AttendanceRepositoryImpl @Inject constructor(
                 roleType = "STUDENT",
                 date = att.date,
                 status = att.status,
-                timeMarked = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(att.dateTimestamp)),
+                timeMarked = SimpleDateFormat("hh:mm a", Locale.US).format(Date(att.dateTimestamp)),
                 remarks = att.remarks,
                 markedByRole = activeClaims?.role?.name ?: "TEACHER",
                 markedByName = activeClaims?.displayName ?: "Faculty In-Charge",
@@ -329,8 +356,9 @@ class AttendanceRepositoryImpl @Inject constructor(
             )
         }
 
-        // Commit atomically to Room: deletion, batch insert, records, and outbox queue in one transaction
-        dao.saveDailyAttendanceBatchWithOutbox(
+        // Commit atomically to Room: tenant-scoped deletion, batch insert, records, and outbox queue in one transaction
+        dao.saveDailyAttendanceBatchWithOutboxInTenant(
+            institutionId = resolvedTenant,
             classSection = cleanClass,
             date = cleanDate,
             attendances = tenantAttendances,
@@ -341,7 +369,7 @@ class AttendanceRepositoryImpl @Inject constructor(
         if (updateStudentPercentages) {
             tenantAttendances.forEach { att ->
                 val student = dao.getStudentById(att.studentId)
-                if (student != null) {
+                if (student != null && student.institutionId == resolvedTenant) {
                     val isPresentOrLate = att.status.equals("PRESENT", ignoreCase = true) || att.status.equals("LATE", ignoreCase = true)
                     val currentPct = student.attendancePercentage
                     val updatedPct = if (isPresentOrLate) {
@@ -349,7 +377,11 @@ class AttendanceRepositoryImpl @Inject constructor(
                     } else {
                         (currentPct * 0.95f + 0f * 0.05f).coerceIn(40f, 100f)
                     }
-                    dao.updateStudentAttendancePercentage(student.id, (Math.round(updatedPct * 10f) / 10f).toFloat())
+                    dao.updateStudentAttendancePercentageInTenant(
+                        student.id,
+                        resolvedTenant,
+                        (Math.round(updatedPct * 10f) / 10f).toFloat()
+                    )
                 }
             }
         }
@@ -612,9 +644,10 @@ class AttendanceRepositoryImpl @Inject constructor(
         records: List<AttendanceRecordEntity>,
         percentageUpdates: Map<String, Float>
     ) = withContext(Dispatchers.IO) {
+        val resolvedTenant = resolveAuthenticatedTenant(batch.institutionId)
         commitRegisterScan(batch, records)
         percentageUpdates.forEach { (studentId, pct) ->
-            dao.updateStudentAttendancePercentage(studentId, pct)
+            dao.updateStudentAttendancePercentageInTenant(studentId, resolvedTenant, pct)
         }
     }
 }

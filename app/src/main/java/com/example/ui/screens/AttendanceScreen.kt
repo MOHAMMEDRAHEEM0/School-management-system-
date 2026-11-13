@@ -72,6 +72,7 @@ import com.example.ui.components.DailyAttendanceRecorder
 import com.example.ui.components.GlassBadge
 import com.example.ui.components.GlassButton
 import com.example.ui.components.GlassCard
+import com.example.ui.components.SmartNfcBadgeAttendanceKiosk
 import com.example.ui.components.launchWhatsAppMessage
 import com.example.ui.theme.GlassBorderLight
 import com.example.ui.theme.GovBorderGrey
@@ -104,7 +105,13 @@ fun AttendanceScreen(
         SimpleDateFormat("EEE, dd MMM yyyy", Locale.getDefault()).format(Date())
     }
 
+    val userClaims by viewModel.userClaims.collectAsState()
+    val authSession by viewModel.currentAuthSession.collectAsState()
+    val selectedWardId by viewModel.selectedWardId.collectAsState()
+    val vmKey = "att_${userClaims?.userId ?: authSession?.user?.id ?: "anon"}_${currentRole.name}_${authSession?.institution?.institutionId ?: "default"}"
+
     val attendanceViewModel: TeacherAttendanceViewModel = viewModel(
+        key = vmKey,
         factory = TeacherAttendanceViewModelFactory(
             attendanceRepository = viewModel.attendanceRepository,
             schoolRepository = viewModel.repository
@@ -119,7 +126,12 @@ fun AttendanceScreen(
     // RBAC Security Check: If current user is Student or Parent, strictly isolate to StudentAttendancePortal
     // Never allow students or parents to access Teacher DailyAttendanceRecorder or batch saving!
     if (currentRole == UserRole.STUDENT || currentRole == UserRole.PARENT) {
-        val activeStudent = students.firstOrNull { it.admissionNumber == "ADM-2026-001" } ?: students.firstOrNull()
+        val activeTenant = authSession?.institution?.institutionId
+        val targetStudentId = if (currentRole == UserRole.PARENT) selectedWardId else (userClaims?.userId ?: authSession?.user?.id)
+        val tenantStudents = students.filter { activeTenant.isNullOrBlank() || it.institutionId == activeTenant }
+        val activeStudent = tenantStudents.firstOrNull {
+            it.id == targetStudentId || it.admissionNumber == targetStudentId
+        } ?: tenantStudents.firstOrNull { it.admissionNumber == "ADM-2026-001" } ?: tenantStudents.firstOrNull()
         com.example.ui.components.StudentAttendancePortal(
             viewModel = viewModel,
             student = activeStudent,
@@ -293,6 +305,12 @@ fun AttendanceScreen(
                 text = { Text("Roster Overview", fontSize = 12.sp, fontWeight = FontWeight.Bold) },
                 modifier = Modifier.testTag("tab_attendance_roster")
             )
+            Tab(
+                selected = selectedTab == 3,
+                onClick = { selectedTab = 3 },
+                text = { Text("NFC Badge Kiosk", fontSize = 12.sp, fontWeight = FontWeight.Bold) },
+                modifier = Modifier.testTag("tab_attendance_nfc_kiosk")
+            )
         }
 
         // =====================================================================
@@ -323,6 +341,16 @@ fun AttendanceScreen(
                     // Scholar Roster & Attendance Analytics
                     AttendanceRosterOverview(
                         students = students.filter { it.section == "A" },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                3 -> {
+                    // Smart NFC / RFID Digital Badge Attendance Kiosk
+                    SmartNfcBadgeAttendanceKiosk(
+                        students = students.filter { it.section == "A" },
+                        onLogPunch = { stu ->
+                            attendanceViewModel.setStudentStatus(stu.id, "PRESENT")
+                        },
                         modifier = Modifier.fillMaxSize()
                     )
                 }

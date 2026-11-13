@@ -153,13 +153,19 @@ fun RbacClearanceIndicatorBar(
 
                     Spacer(modifier = Modifier.width(8.dp))
 
-                    Column {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
                             Text(
                                 text = "AUTH CLEARANCE: ${currentRole.label.uppercase()}",
                                 fontSize = 11.5.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = GovSlateDark
+                                color = GovSlateDark,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Surface(
@@ -179,6 +185,8 @@ fun RbacClearanceIndicatorBar(
                                         RbacRoleCategory.TEACHER -> GovGreen
                                         RbacRoleCategory.STUDENT -> Color(0xFFB45309)
                                     },
+                                    maxLines = 1,
+                                    softWrap = false,
                                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                                 )
                             }
@@ -186,7 +194,9 @@ fun RbacClearanceIndicatorBar(
                         Text(
                             text = "${currentRole.clearanceTitle} • Institutional Security Guard",
                             fontSize = 9.5.sp,
-                            color = GovSlateMuted
+                            color = GovSlateMuted,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                         )
                     }
                 }

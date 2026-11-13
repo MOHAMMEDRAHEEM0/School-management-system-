@@ -51,7 +51,10 @@ data class AcademicClassEntity(
 // 3. CORE USERS & MULTI-LEVEL RBAC (Enforced at DB level)
 // =========================================================================
 
-@Entity(tableName = "users")
+@Entity(
+    tableName = "users",
+    indices = [Index(value = ["institutionId"])]
+)
 data class UserEntity(
     @PrimaryKey val id: String, // "USR-PRIN-01", "USR-TCH-01", "USR-STU-01"
     val institutionId: String = "INST-SXA-2026",
@@ -93,7 +96,10 @@ data class TeacherEntity(
 )
 typealias Teacher = TeacherEntity
 
-@Entity(tableName = "staff_members")
+@Entity(
+    tableName = "staff_members",
+    indices = [Index(value = ["institutionId"])]
+)
 data class StaffEntity(
     @PrimaryKey val id: String, // e.g. "FAC-PRIN-01", "FAC-TCH-01"
     val institutionId: String = "INST-SXA-2026",
@@ -126,7 +132,10 @@ data class StaffEntity(
 // 4. STUDENTS (Enrolled Scholar Data with Privacy Isolation)
 // =========================================================================
 
-@Entity(tableName = "students")
+@Entity(
+    tableName = "students",
+    indices = [Index(value = ["institutionId"])]
+)
 data class StudentEntity(
     @PrimaryKey val id: String, // e.g. "ADM-2026-001"
     val institutionId: String = "INST-SXA-2026",
@@ -159,7 +168,10 @@ typealias Student = StudentEntity
 // 5. ATTENDANCE SYSTEM (Roll-Call, Camera OCR, Incharge Check, Principal Seal)
 // =========================================================================
 
-@Entity(tableName = "attendance")
+@Entity(
+    tableName = "attendance",
+    indices = [Index(value = ["institutionId"])]
+)
 data class AttendanceEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val institutionId: String = "INST-SXA-2026",
@@ -263,7 +275,12 @@ data class ExamRecordEntity(
 // 7. FEE MANAGEMENT & RECEIPTS (Unique receipt numbers, official printable layout)
 // =========================================================================
 
-@Entity(tableName = "fee_records")
+@Entity(
+    tableName = "fee_records",
+    indices = [
+        Index(value = ["institutionId", "studentId"])
+    ]
+)
 data class FeeRecordEntity(
     @PrimaryKey val id: String,
     val institutionId: String = "INST-SXA-2026",
@@ -282,9 +299,9 @@ data class FeeRecordEntity(
     val paymentMode: String = "ONLINE", // "ONLINE", "CHEQUE", "CASH", "BANK_TRANSFER"
     val verifiedByIncharge: Boolean = true
 ) {
-    val totalRupees: Long get() = if (totalAmount >= 100000L) totalAmount / 100L else totalAmount
-    val paidRupees: Long get() = if (paidAmount >= 100000L) paidAmount / 100L else paidAmount
-    val dueRupees: Long get() = if (dueAmount >= 100000L) dueAmount / 100L else dueAmount
+    val totalRupees: Long get() = totalAmount / 100L
+    val paidRupees: Long get() = paidAmount / 100L
+    val dueRupees: Long get() = dueAmount / 100L
 
     constructor(
         id: String,
@@ -640,7 +657,14 @@ data class FeeStructureEntity(
     val isMandatory: Boolean = true
 )
 
-@Entity(tableName = "fee_payment_transactions")
+@Entity(
+    tableName = "fee_payment_transactions",
+    indices = [
+        Index(value = ["receiptNumber"], unique = true),
+        Index(value = ["idempotencyKey"], unique = true),
+        Index(value = ["institutionId", "studentId", "feeRecordId"])
+    ]
+)
 data class FeePaymentTransactionEntity(
     @PrimaryKey val transactionId: String, // e.g. "TXN-2026-001"
     val institutionId: String = "INST-SXA-2026",
@@ -648,13 +672,34 @@ data class FeePaymentTransactionEntity(
     val studentId: String,
     val studentName: String,
     val amountPaidPaise: Long,
-    val paymentMode: String = "ONLINE", // "ONLINE", "CASH", "CHEQUE", "BANK_TRANSFER"
+    val paymentMode: String = "CASH", // "CASH", "CHEQUE", "BANK_TRANSFER", "UPI_MANUAL", "GATEWAY_ONLINE"
     val transactionReference: String,
     val receiptNumber: String,
     val timestamp: Long = System.currentTimeMillis(),
-    val cashierName: String = "Suresh Mehta (Accounts Bursar)",
-    val status: String = "SUCCESS" // "SUCCESS", "RECONCILED", "REFUNDED"
-)
+    val cashierName: String = "",
+    val status: String = STATUS_RECORDED_MANUAL, // "RECORDED_MANUAL", "GATEWAY_VERIFIED", "SUCCESS", "RECONCILED", "REFUNDED"
+    val recordedByUserId: String = "",
+    val recordedByRole: String = "",
+    val verificationSource: String = SOURCE_MANUAL_RECORDED, // "MANUAL_RECORDED" vs "GATEWAY_VERIFIED"
+    val idempotencyKey: String = transactionId,
+    val syncStatus: String = SYNC_PENDING, // "PENDING_SYNC", "SYNCED", "CONFLICT"
+    val isSyncedToCentral: Boolean = false,
+    val serverAckToken: String? = null,
+    val remarks: String = ""
+) {
+    val amountRupees: Long get() = amountPaidPaise / 100L
+    val isGatewayVerified: Boolean get() = verificationSource == SOURCE_GATEWAY_VERIFIED
+
+    companion object {
+        const val SOURCE_MANUAL_RECORDED = "MANUAL_RECORDED"
+        const val SOURCE_GATEWAY_VERIFIED = "GATEWAY_VERIFIED"
+        const val SYNC_PENDING = "PENDING_SYNC"
+        const val SYNC_SYNCED = "SYNCED"
+        const val SYNC_CONFLICT = "CONFLICT"
+        const val STATUS_RECORDED_MANUAL = "RECORDED_MANUAL"
+        const val STATUS_GATEWAY_VERIFIED = "GATEWAY_VERIFIED"
+    }
+}
 
 // =========================================================================
 // 20. PUSH NOTIFICATIONS & MESSAGING
@@ -1128,6 +1173,7 @@ data class FeatureFlagEntity(
     tableName = "durable_outbox",
     indices = [
         Index(value = ["idempotencyKey"], unique = true),
+        Index(value = ["institutionId"]),
         Index(value = ["institutionId", "status", "nextAttemptAt"])
     ]
 )

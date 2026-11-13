@@ -28,103 +28,19 @@ class AttendanceFeeSyncWorker(
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
-        try {
-            val database = AppDatabase.getDatabase(applicationContext)
-            val dao = database.schoolDao()
-            val connectivity = NetworkConnectivityMonitor(applicationContext)
-            val outboxManager = DurableOutboxManager(dao, connectivity)
-            val institutionId = "INST-SXA-2026"
+        val database = AppDatabase.getDatabase(applicationContext)
+        val dao = database.schoolDao()
+        val connectivity = NetworkConnectivityMonitor(applicationContext)
+        val outboxManager = DurableOutboxManager(dao, connectivity)
 
-            // 1. Scan and count pending attendance items
-            val pendingAttendanceEntities = listOf("ATTENDANCE", "ATTENDANCE_RECORD", "REGISTER_SCAN")
-            val pendingFeeEntities = listOf("FEE_RECORD", "FEE_PAYMENT", "FEE_TRANSACTION", "STUDENT_FEES")
-
-            // Report progress: Initializing background sync
-            setProgress(
-                workDataOf(
-                    PROGRESS_STATE to "SCANNING_OFFLINE_LOGS",
-                    KEY_BATTERY_STRATEGY to STRATEGY_IDLE_CHARGING
-                )
+        setProgress(
+            workDataOf(
+                PROGRESS_STATE to "SCANNING_OFFLINE_LOGS",
+                KEY_BATTERY_STRATEGY to STRATEGY_IDLE_CHARGING
             )
+        )
 
-            // 2. Ensure any un-enqueued offline attendance records in local database are captured
-            var additionalAttendanceQueued = 0
-            val allAttendance = dao.getAllAttendanceRecords()
-            // Flush outbox mutations targeting attendance and fee logs
-            val syncResult = outboxManager.flushQueue(institutionId = institutionId, forceAll = true)
-
-            val ackCount = syncResult.getOrNull()?.acknowledgedCount ?: 0
-            val failCount = syncResult.getOrNull()?.failedCount ?: 0
-            val conflictCount = syncResult.getOrNull()?.conflictCount ?: 0
-
-            // Estimate distribution between attendance and fees based on processed items
-            val details = syncResult.getOrNull()?.details ?: emptyList()
-            var attendanceSynced = details.count { detail ->
-                pendingAttendanceEntities.any { detail.contains(it, ignoreCase = true) }
-            }
-            var feesSynced = details.count { detail ->
-                pendingFeeEntities.any { detail.contains(it, ignoreCase = true) }
-            }
-
-            // If sync flushed items generally, distribute count for reporting
-            if (attendanceSynced == 0 && feesSynced == 0 && ackCount > 0) {
-                attendanceSynced = ackCount / 2
-                feesSynced = ackCount - attendanceSynced
-            }
-
-            val timestamp = System.currentTimeMillis()
-            val timeString = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(timestamp))
-
-            // 3. Log administrative audit entry for the background sync execution
-            dao.insertAuditLog(
-                AuditLogEntity(
-                    institutionId = institutionId,
-                    timestamp = timestamp,
-                    formattedTime = timeString,
-                    action = "OFFLINE_FIRST_BACKGROUND_SYNC",
-                    entityType = "ATTENDANCE_AND_OFFLINE_FEE_LOGS",
-                    entityId = "WORK-${id.toString().take(8)}",
-                    actorUserId = "SYSTEM_WORKMANAGER",
-                    actorName = "WorkManager Daemon",
-                    actorRole = "SYSTEM_WORKER",
-                    previousState = "OFFLINE_QUEUED",
-                    newState = if (syncResult.isSuccess) "SYNCHRONIZED_TO_CLOUD" else "PARTIALLY_SYNCED",
-                    remarks = "WorkManager executed on Network Connected state. Synced: $attendanceSynced attendance logs, $feesSynced fee transactions ($ackCount total ack, $failCount failed, $conflictCount conflicts) at $timeString",
-                    syncStatus = "SYNCHRONIZED"
-                )
-            )
-
-            val outputData = workDataOf(
-                KEY_SYNCED_ATTENDANCE_COUNT to attendanceSynced,
-                KEY_SYNCED_FEE_COUNT to feesSynced,
-                KEY_TOTAL_SYNCED to ackCount,
-                KEY_FAIL_COUNT to failCount,
-                KEY_CONFLICT_COUNT to conflictCount,
-                KEY_BATTERY_STRATEGY to STRATEGY_IDLE_CHARGING,
-                KEY_TIMESTAMP to timestamp,
-                KEY_EXECUTION_TIME_FORMATTED to timeString
-            )
-
-            if (syncResult.isSuccess || ackCount > 0) {
-                Result.success(outputData)
-            } else {
-                if (runAttemptCount < MAX_RETRY_ATTEMPTS) {
-                    Result.retry()
-                } else {
-                    Result.failure(outputData)
-                }
-            }
-        } catch (e: Exception) {
-            if (runAttemptCount < MAX_RETRY_ATTEMPTS) {
-                Result.retry()
-            } else {
-                val errorData = workDataOf(
-                    KEY_ERROR_MESSAGE to (e.localizedMessage ?: "Unknown sync error"),
-                    KEY_BATTERY_STRATEGY to STRATEGY_IDLE_CHARGING
-                )
-                Result.failure(errorData)
-            }
-        }
+        executeSync(dao, outboxManager, runAttemptCount, "WORK-${id.toString().take(8)}")
     }
 
     companion object {
@@ -142,5 +58,104 @@ class AttendanceFeeSyncWorker(
         const val KEY_TIMESTAMP = "KEY_TIMESTAMP"
         const val KEY_EXECUTION_TIME_FORMATTED = "KEY_EXECUTION_TIME_FORMATTED"
         const val KEY_ERROR_MESSAGE = "KEY_ERROR_MESSAGE"
+
+        internal suspend fun executeSync(
+            dao: com.example.data.local.dao.SchoolDao,
+            outboxManager: DurableOutboxManager,
+            attemptCount: Int,
+            workerEntityId: String = "WORK-MANUAL"
+        ): Result = withContext(Dispatchers.IO) {
+            try {
+                val activeTenant = com.example.security.TenantSecurityContext.getActiveTenantIdOrNull()
+                    ?: com.example.security.SecureSessionManager.getActiveSession()?.institutionId
+                val tenantIds = (dao.getPendingOutboxInstitutionIds() + listOfNotNull(activeTenant))
+                    .filter { it.isNotBlank() }
+                    .distinct()
+
+                val pendingAttendanceEntities = listOf("ATTENDANCE", "ATTENDANCE_RECORD", "REGISTER_SCAN")
+                val pendingFeeEntities = listOf("FEE_RECORD", "FEE_PAYMENT", "FEE_TRANSACTION", "STUDENT_FEES")
+
+                var totalAckCount = 0
+                var totalFailCount = 0
+                var totalConflictCount = 0
+                var anyBatchFailure = false
+                val allDetails = mutableListOf<String>()
+
+                for (tenantId in tenantIds) {
+                    val syncResult = outboxManager.flushQueue(institutionId = tenantId, forceAll = true)
+                    if (syncResult.isFailure) {
+                        anyBatchFailure = true
+                    }
+                    val batch = syncResult.getOrNull()
+                    if (batch != null) {
+                        totalAckCount += batch.acknowledgedCount
+                        totalFailCount += batch.failedCount
+                        totalConflictCount += batch.conflictCount
+                        allDetails.addAll(batch.details)
+                    }
+                }
+
+                val attendanceSynced = allDetails.count { detail ->
+                    detail.startsWith("[ACK]") &&
+                        pendingAttendanceEntities.any { detail.contains(it, ignoreCase = true) }
+                }
+                val feesSynced = allDetails.count { detail ->
+                    detail.startsWith("[ACK]") &&
+                        pendingFeeEntities.any { detail.contains(it, ignoreCase = true) }
+                }
+
+                val timestamp = System.currentTimeMillis()
+                val timeString = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(timestamp))
+
+                if (tenantIds.isNotEmpty() && (totalAckCount > 0 || totalFailCount > 0 || totalConflictCount > 0)) {
+                    dao.insertAuditLog(
+                        AuditLogEntity(
+                            institutionId = activeTenant ?: tenantIds.first(),
+                            timestamp = timestamp,
+                            formattedTime = timeString,
+                            action = "OFFLINE_FIRST_BACKGROUND_SYNC",
+                            entityType = "ATTENDANCE_AND_OFFLINE_FEE_LOGS",
+                            entityId = workerEntityId,
+                            actorUserId = "SYSTEM_WORKMANAGER",
+                            actorName = "WorkManager Daemon",
+                            actorRole = "SYSTEM_WORKER",
+                            previousState = "OFFLINE_QUEUED",
+                            newState = if (!anyBatchFailure && totalFailCount == 0) "SYNCHRONIZED_TO_CLOUD" else "PARTIALLY_SYNCED",
+                            remarks = "WorkManager executed on Network Connected state. Synced: $attendanceSynced attendance logs, $feesSynced fee transactions ($totalAckCount total ack, $totalFailCount failed, $totalConflictCount conflicts) at $timeString",
+                            syncStatus = if (!anyBatchFailure && totalFailCount == 0) "SYNCHRONIZED" else "PENDING_RETRY"
+                        )
+                    )
+                }
+
+                val outputData = workDataOf(
+                    KEY_SYNCED_ATTENDANCE_COUNT to attendanceSynced,
+                    KEY_SYNCED_FEE_COUNT to feesSynced,
+                    KEY_TOTAL_SYNCED to totalAckCount,
+                    KEY_FAIL_COUNT to totalFailCount,
+                    KEY_CONFLICT_COUNT to totalConflictCount,
+                    KEY_BATTERY_STRATEGY to STRATEGY_IDLE_CHARGING,
+                    KEY_TIMESTAMP to timestamp,
+                    KEY_EXECUTION_TIME_FORMATTED to timeString
+                )
+
+                if (!anyBatchFailure && totalFailCount == 0) {
+                    Result.success(outputData)
+                } else if (attemptCount < MAX_RETRY_ATTEMPTS) {
+                    Result.retry()
+                } else {
+                    Result.failure(outputData)
+                }
+            } catch (e: Exception) {
+                if (attemptCount < MAX_RETRY_ATTEMPTS) {
+                    Result.retry()
+                } else {
+                    val errorData = workDataOf(
+                        KEY_ERROR_MESSAGE to (e.localizedMessage ?: "Unknown sync error"),
+                        KEY_BATTERY_STRATEGY to STRATEGY_IDLE_CHARGING
+                    )
+                    Result.failure(errorData)
+                }
+            }
+        }
     }
 }

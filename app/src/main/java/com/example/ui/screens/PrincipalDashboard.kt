@@ -42,12 +42,13 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -139,13 +140,19 @@ fun PrincipalDashboard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     Text(
                         text = "Executive Directorate",
                         fontSize = 17.sp,
                         fontWeight = FontWeight.Black,
-                        color = GovNavyDark
+                        color = GovNavyDark,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     GlassBadge(text = "SUPER ADMIN", color = GovGreen)
@@ -153,7 +160,9 @@ fun PrincipalDashboard(
                 Text(
                     text = "${institution?.name ?: "St. Xavier's International Academy"} | Master Clearance",
                     fontSize = 10.5.sp,
-                    color = GovSlateMuted
+                    color = GovSlateMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
 
@@ -276,74 +285,58 @@ fun PrincipalDashboard(
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // Segmented Control for Principal Modules
+        // Segmented Control for Principal Modules (Scrollable to prevent vertical text squeezing)
+        val principalTabs = remember {
+            buildList {
+                add(0 to "Approvals")
+                add(1 to "Staff Registry")
+                add(2 to "Assets & Bills")
+                if (FeatureAvailability.isAiAcademicToolsEnabled) add(3 to "AI Academic Tools")
+                if (FeatureAvailability.isPaymentSandboxEnabled) add(4 to "Payment Sandbox")
+                add(5 to "Circulars & Notices")
+                add(6 to "Leave Directorate")
+                add(7 to "Campus Timetable")
+                add(8 to "Fleet & Transport")
+            }
+        }
+        val activeVisualTabIndex = principalTabs.indexOfFirst { it.first == selectedTab }.coerceAtLeast(0)
+
         Surface(
             shape = RoundedCornerShape(8.dp),
             color = PureWhite,
             border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorderLight),
             modifier = Modifier.fillMaxWidth()
         ) {
-            TabRow(
-                selectedTabIndex = selectedTab,
+            ScrollableTabRow(
+                selectedTabIndex = activeVisualTabIndex,
                 containerColor = PureWhite,
+                edgePadding = 12.dp,
                 indicator = { tabPositions ->
-                    TabRowDefaults.Indicator(
-                        modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
-                        color = GovNavyPrimary,
-                        height = 3.dp
-                    )
+                    if (activeVisualTabIndex < tabPositions.size) {
+                        TabRowDefaults.SecondaryIndicator(
+                            modifier = Modifier.tabIndicatorOffset(tabPositions[activeVisualTabIndex]),
+                            color = GovNavyPrimary,
+                            height = 3.dp
+                        )
+                    }
                 }
             ) {
-                Tab(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    text = { Text("Approvals", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
-                )
-                Tab(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    text = { Text("Staff Registry", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
-                )
-                Tab(
-                    selected = selectedTab == 2,
-                    onClick = { selectedTab = 2 },
-                    text = { Text("Assets & Bills", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
-                )
-                if (FeatureAvailability.isAiAcademicToolsEnabled) {
+                principalTabs.forEach { (tabId, label) ->
                     Tab(
-                        selected = selectedTab == 3,
-                        onClick = { selectedTab = 3 },
-                        text = { Text("AI Academic Tools", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
+                        selected = selectedTab == tabId,
+                        onClick = { selectedTab = tabId },
+                        modifier = if (tabId == 4) Modifier.testTag("tab_principal_payment_sandbox") else Modifier,
+                        text = {
+                            Text(
+                                text = label,
+                                fontSize = 12.sp,
+                                fontWeight = if (selectedTab == tabId) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
                     )
                 }
-                if (FeatureAvailability.isPaymentSandboxEnabled) {
-                    Tab(
-                        selected = selectedTab == 4,
-                        onClick = { selectedTab = 4 },
-                        text = { Text("Payment Sandbox", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) },
-                        modifier = Modifier.testTag("tab_principal_payment_sandbox")
-                    )
-                }
-                Tab(
-                    selected = selectedTab == 5,
-                    onClick = { selectedTab = 5 },
-                    text = { Text("Circulars & Notices", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
-                )
-                Tab(
-                    selected = selectedTab == 6,
-                    onClick = { selectedTab = 6 },
-                    text = { Text("Leave Directorate", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
-                )
-                Tab(
-                    selected = selectedTab == 7,
-                    onClick = { selectedTab = 7 },
-                    text = { Text("Campus Timetable", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
-                )
-                Tab(
-                    selected = selectedTab == 8,
-                    onClick = { selectedTab = 8 },
-                    text = { Text("Fleet & Transport", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
-                )
             }
         }
 

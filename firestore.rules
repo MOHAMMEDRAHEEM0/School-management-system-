@@ -153,31 +153,43 @@ service cloud.firestore {
         allow delete: if hasMatchingTenant(tenantId) && hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL']);
       }
 
-      // 7. Fee Invoices & Financial Ledgers
+      // 7. Fee Invoices & Financial Ledgers (No deletion allowed)
       match /fee_invoices/{invoiceId} {
         allow read: if hasMatchingTenant(tenantId) && (
           hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'ACCOUNTANT', 'ROLE_ACCOUNTANT']) ||
           resource.data.studentId == getAuthUid() ||
           isParentOf(resource.data.studentId)
         );
-        allow write: if hasMatchingTenant(tenantId) && preservesTenant(tenantId) &&
+        allow create, update: if hasMatchingTenant(tenantId) && preservesTenant(tenantId) &&
           hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'ACCOUNTANT', 'ROLE_ACCOUNTANT']);
+        allow delete: if false; // Preserve financial ledger history
       }
 
-      // 8. Payment Transactions (Immutable, Server-Validated Ledger)
+      // 8. Payment Transactions (Immutable, Manual vs Gateway-Verified Separated)
       match /payment_transactions/{transactionId} {
         allow read: if hasMatchingTenant(tenantId) && (
           hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'ACCOUNTANT', 'ROLE_ACCOUNTANT']) ||
           resource.data.studentId == getAuthUid() ||
           isParentOf(resource.data.studentId)
         );
-        // Clients CANNOT declare payment successful!
-        // Only trusted backend Cloud Functions (isServerService == true) can record SUCCESS transactions.
+        // Only trusted server webhooks (isServerService == true) may record GATEWAY_VERIFIED / SUCCESS online transactions.
+        // Authorized financial officers (ADMIN, PRINCIPAL, ACCOUNTANT) may only create immutable MANUAL_RECORDED counter entries.
         allow create: if hasMatchingTenant(tenantId) && preservesTenant(tenantId) && (
           (('isServerService' in request.auth.token) && request.auth.token.isServerService == true) ||
-          (hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'ACCOUNTANT', 'ROLE_ACCOUNTANT']) && request.resource.data.status != 'SUCCESS')
+          (
+            hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'ACCOUNTANT', 'ROLE_ACCOUNTANT']) &&
+            request.resource.data.verificationSource == 'MANUAL_RECORDED' &&
+            request.resource.data.status == 'RECORDED_MANUAL' &&
+            request.resource.data.recordedByUserId == getAuthUid() &&
+            request.resource.data.amountPaidPaise is int &&
+            request.resource.data.amountPaidPaise > 0 &&
+            request.resource.data.receiptNumber is string &&
+            request.resource.data.receiptNumber.size() > 0 &&
+            request.resource.data.idempotencyKey is string &&
+            request.resource.data.idempotencyKey.size() > 0
+          )
         );
-        allow update, delete: if false; // Strict immutability
+        allow update, delete: if false; // Strict financial audit immutability
       }
 
       // 9. Homework & Student Submissions
@@ -337,8 +349,9 @@ service cloud.firestore {
           resource.data.studentId == getAuthUid() ||
           isParentOf(resource.data.studentId)
         );
-        allow write: if hasMatchingTenant(tenantId) && preservesTenant(tenantId) &&
+        allow create, update: if hasMatchingTenant(tenantId) && preservesTenant(tenantId) &&
           hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'ACCOUNTANT', 'ROLE_ACCOUNTANT']);
+        allow delete: if false;
       }
 
       match /payment_transactions/{transactionId} {
@@ -349,7 +362,18 @@ service cloud.firestore {
         );
         allow create: if hasMatchingTenant(tenantId) && preservesTenant(tenantId) && (
           (('isServerService' in request.auth.token) && request.auth.token.isServerService == true) ||
-          (hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'ACCOUNTANT', 'ROLE_ACCOUNTANT']) && request.resource.data.status != 'SUCCESS')
+          (
+            hasAnyRole(['ADMIN', 'ROLE_ADMIN', 'PRINCIPAL', 'ROLE_PRINCIPAL', 'ACCOUNTANT', 'ROLE_ACCOUNTANT']) &&
+            request.resource.data.verificationSource == 'MANUAL_RECORDED' &&
+            request.resource.data.status == 'RECORDED_MANUAL' &&
+            request.resource.data.recordedByUserId == getAuthUid() &&
+            request.resource.data.amountPaidPaise is int &&
+            request.resource.data.amountPaidPaise > 0 &&
+            request.resource.data.receiptNumber is string &&
+            request.resource.data.receiptNumber.size() > 0 &&
+            request.resource.data.idempotencyKey is string &&
+            request.resource.data.idempotencyKey.size() > 0
+          )
         );
         allow update, delete: if false;
       }

@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Refresh
@@ -49,6 +50,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.entities.InstitutionEntity
@@ -80,6 +82,7 @@ fun FrostedGlassInstitutionalTopBar(
     selectedChildGrade: String = "Grade 10-A",
     onSelectChild: (name: String, grade: String) -> Unit = { _, _ -> },
     onTriggerSync: () -> Unit,
+    onQuickLockClick: () -> Unit = {},
     onLogoutClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -127,34 +130,47 @@ fun FrostedGlassInstitutionalTopBar(
 
                     Spacer(modifier = Modifier.width(10.dp))
 
-                    Column {
+                    Column(modifier = Modifier.weight(1f, fill = false)) {
                         Text(
                             text = institution?.name ?: "St. Xavier's International Academy",
                             fontSize = 13.5.sp,
                             fontWeight = FontWeight.ExtraBold,
                             color = GovNavyPrimary,
-                            letterSpacing = 0.2.sp
+                            letterSpacing = 0.2.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(top = 1.dp)
+                        ) {
                             Text(
-                                text = "Autonomous Campus Cloud • Batch $selectedBatch",
+                                text = "Campus Cloud • $selectedBatch",
                                 fontSize = 9.5.sp,
                                 fontWeight = FontWeight.Medium,
-                                color = GovSlateMuted
+                                color = GovSlateMuted,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
-                            // Micro-pill campus code
+                            // Micro-pill campus code (softWrap=false guarantees horizontal layout)
                             Surface(
                                 shape = RoundedCornerShape(4.dp),
                                 color = Color(0xFFF1F5F9),
                                 border = BorderStroke(0.6.dp, Color(0xFFCBD5E1))
                             ) {
+                                val regCode = institution?.registrationCode?.let {
+                                    if (it.startsWith("REG")) it else "REG: $it"
+                                } ?: "REG: 3477"
                                 Text(
-                                    text = institution?.registrationCode ?: "REG: 3477",
+                                    text = regCode,
                                     fontSize = 8.5.sp,
                                     fontFamily = FontFamily.Monospace,
                                     fontWeight = FontWeight.Bold,
                                     color = GovSlateDark,
+                                    maxLines = 1,
+                                    softWrap = false,
                                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                                 )
                             }
@@ -230,6 +246,19 @@ fun FrostedGlassInstitutionalTopBar(
                             contentDescription = "Sync",
                             tint = GovNavyPrimary,
                             modifier = Modifier.size(16.dp)
+                        )
+                    }
+
+                    // Quick Lock Button
+                    IconButton(
+                        onClick = onQuickLockClick,
+                        modifier = Modifier.size(30.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = "Quick App Lock",
+                            tint = GovNavyPrimary,
+                            modifier = Modifier.size(15.dp)
                         )
                     }
 

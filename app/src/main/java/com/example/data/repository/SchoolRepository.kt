@@ -46,19 +46,33 @@ import javax.inject.Singleton
 class SchoolRepository @Inject constructor(
     val dao: SchoolDao,
     val outboxManager: DurableOutboxManager,
-    val attendanceRepository: AttendanceRepository
+    val attendanceRepository: AttendanceRepository,
+    val feeRepository: FeeRepository
 ) {
 
     constructor(dao: SchoolDao) : this(
         dao = dao,
         outboxManager = DurableOutboxManager(dao),
-        attendanceRepository = AttendanceRepositoryImpl(dao, DurableOutboxManager(dao))
+        attendanceRepository = AttendanceRepositoryImpl(dao, DurableOutboxManager(dao)),
+        feeRepository = FeeRepositoryImpl(dao, DurableOutboxManager(dao))
     )
 
     constructor(dao: SchoolDao, outboxManager: DurableOutboxManager) : this(
         dao = dao,
         outboxManager = outboxManager,
-        attendanceRepository = AttendanceRepositoryImpl(dao, outboxManager)
+        attendanceRepository = AttendanceRepositoryImpl(dao, outboxManager),
+        feeRepository = FeeRepositoryImpl(dao, outboxManager)
+    )
+
+    constructor(
+        dao: SchoolDao,
+        outboxManager: DurableOutboxManager,
+        attendanceRepository: AttendanceRepository
+    ) : this(
+        dao = dao,
+        outboxManager = outboxManager,
+        attendanceRepository = attendanceRepository,
+        feeRepository = FeeRepositoryImpl(dao, outboxManager)
     )
 
     val userRepository: UserRepository = UserRepositoryImpl(dao)
@@ -612,6 +626,9 @@ class SchoolRepository @Inject constructor(
     suspend fun insertFeeStructure(structure: FeeStructureEntity) =
         dao.insertFeeStructure(structure)
 
+    fun getAllPaymentTransactions(): Flow<List<FeePaymentTransactionEntity>> =
+        dao.getAllPaymentTransactions()
+
     fun getPaymentTransactions(institutionId: String = "INST-SXA-2026"): Flow<List<FeePaymentTransactionEntity>> =
         dao.getPaymentTransactions(institutionId)
 
@@ -626,6 +643,12 @@ class SchoolRepository @Inject constructor(
         status: String,
         auditLog: AuditLogEntity
     ) = dao.processFeePaymentAtomic(feeId, transaction, paidPaise, duePaise, status, auditLog)
+
+    suspend fun recordManualPaymentSafe(request: ManualFeePaymentRequest): Result<FeePaymentReceiptResult> =
+        feeRepository.recordManualPayment(request)
+
+    suspend fun createFeeAssessmentSafe(request: CreateFeeAssessmentRequest): Result<FeeRecordEntity> =
+        feeRepository.createFeeAssessment(request)
 
     // =========================================================================
     // 20. PUSH NOTIFICATIONS

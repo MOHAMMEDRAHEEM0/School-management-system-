@@ -25,34 +25,53 @@ class CloudSyncWorker(
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
-        return try {
-            val database = AppDatabase.getDatabase(applicationContext)
-            val dao = database.schoolDao()
-            val connectivity = NetworkConnectivityMonitor(applicationContext)
-            val outboxManager = DurableOutboxManager(dao, connectivity)
-
-            val syncResult = outboxManager.flushQueue()
-            if (syncResult.isSuccess) {
-                Result.success()
-            } else {
-                if (runAttemptCount < 3) {
-                    Result.retry()
-                } else {
-                    Result.failure()
-                }
-            }
-        } catch (e: Exception) {
-            if (runAttemptCount < 3) {
-                Result.retry()
-            } else {
-                Result.failure()
-            }
-        }
+        val database = AppDatabase.getDatabase(applicationContext)
+        val dao = database.schoolDao()
+        val connectivity = NetworkConnectivityMonitor(applicationContext)
+        val outboxManager = DurableOutboxManager(dao, connectivity)
+        return executeSync(dao, outboxManager, runAttemptCount)
     }
 
     companion object {
         private const val PERIODIC_WORK_TAG = "SCHOOL_OUTBOX_PERIODIC_SYNC"
         private const val EXPEDITED_WORK_TAG = "SCHOOL_OUTBOX_IMMEDIATE_FLUSH"
+
+        internal suspend fun executeSync(
+            dao: com.example.data.local.dao.SchoolDao,
+            outboxManager: DurableOutboxManager,
+            attemptCount: Int
+        ): Result {
+            return try {
+                val activeTenant = com.example.security.TenantSecurityContext.getActiveTenantIdOrNull()
+                    ?: com.example.security.SecureSessionManager.getActiveSession()?.institutionId
+                val tenantIds = (dao.getPendingOutboxInstitutionIds() + listOfNotNull(activeTenant))
+                    .filter { it.isNotBlank() }
+                    .distinct()
+
+                var anyFailure = false
+                for (tenantId in tenantIds) {
+                    val syncResult = outboxManager.flushQueue(institutionId = tenantId, forceAll = false)
+                    val failedCount = syncResult.getOrNull()?.failedCount ?: 0
+                    if (syncResult.isFailure || failedCount > 0) {
+                        anyFailure = true
+                    }
+                }
+
+                if (!anyFailure) {
+                    Result.success()
+                } else if (attemptCount < 3) {
+                    Result.retry()
+                } else {
+                    Result.failure()
+                }
+            } catch (e: Exception) {
+                if (attemptCount < 3) {
+                    Result.retry()
+                } else {
+                    Result.failure()
+                }
+            }
+        }
 
         /**
          * Schedules periodic background sync every 15 minutes whenever connected to the internet.

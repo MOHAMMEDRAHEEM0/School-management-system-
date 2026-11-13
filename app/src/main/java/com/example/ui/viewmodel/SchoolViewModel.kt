@@ -51,6 +51,11 @@ import com.example.data.repository.AiAcademicAssistant
 import com.example.data.repository.AttendanceRepository
 import com.example.data.repository.AuthRepository
 import com.example.data.repository.AuthRepositoryImpl
+import com.example.data.repository.CreateFeeAssessmentRequest
+import com.example.data.repository.FeeBalanceSummary
+import com.example.data.repository.FeePaymentReceiptResult
+import com.example.data.repository.FeePaymentValidator
+import com.example.data.repository.ManualFeePaymentRequest
 import com.example.data.repository.SchoolRepository
 import com.example.data.repository.UserRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -61,7 +66,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 @HiltViewModel
@@ -126,7 +133,7 @@ class SchoolViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Current Active Role & Session Claims
-    private val _currentRole = MutableStateFlow(UserRole.PRINCIPAL)
+    private val _currentRole = MutableStateFlow(UserRole.STUDENT)
     val currentRole: StateFlow<UserRole> = _currentRole.asStateFlow()
 
     private val _userClaims = MutableStateFlow<SecurityClaims?>(null)
@@ -250,8 +257,155 @@ class SchoolViewModel @Inject constructor(
     val feeStructures: StateFlow<List<FeeStructureEntity>> = repository.getFeeStructures()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val paymentTransactions: StateFlow<List<FeePaymentTransactionEntity>> = repository.getPaymentTransactions()
+    val paymentTransactions: StateFlow<List<FeePaymentTransactionEntity>> = repository.getAllPaymentTransactions()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // =========================================================================
+    // PHASE D: FEE RECEIPTS & FINANCIAL LEDGER STATE FLOW
+    // =========================================================================
+    private val _feeStudentQuery = MutableStateFlow("")
+    private val _selectedFeeStudentId = MutableStateFlow<String?>(null)
+    private val _feeOperationUiFlags = MutableStateFlow(FeeWorkflowUiState())
+    private val _hasLoadedFeeStream = MutableStateFlow(false)
+
+    val feeWorkflowState: StateFlow<FeeWorkflowUiState> = combine(
+        _currentAuthSession,
+        _userClaims,
+        _verifiedInstitution,
+        students,
+        feeRecords,
+        paymentTransactions,
+        _feeStudentQuery,
+        _selectedFeeStudentId,
+        _isOnline,
+        _feeOperationUiFlags,
+        _hasLoadedFeeStream
+    ) { values ->
+        @Suppress("UNCHECKED_CAST")
+        val session = values[0] as com.example.data.model.AuthSession?
+        val claims = values[1] as SecurityClaims?
+        val inst = values[2] as InstitutionEntity?
+        @Suppress("UNCHECKED_CAST")
+        val allStudentsList = values[3] as List<StudentEntity>
+        @Suppress("UNCHECKED_CAST")
+        val allFeesList = values[4] as List<FeeRecordEntity>
+        @Suppress("UNCHECKED_CAST")
+        val allTxnsList = values[5] as List<FeePaymentTransactionEntity>
+        val query = values[6] as String
+        val selectedStudentId = values[7] as String?
+        val online = values[8] as Boolean
+        val flags = values[9] as FeeWorkflowUiState
+        val hasLoaded = values[10] as Boolean
+
+        val activeTenant = session?.institution?.institutionId
+            ?: com.example.security.TenantSecurityContext.getActiveTenantIdOrNull()
+            ?: inst?.institutionId
+            ?: ""
+        val role = claims?.role ?: session?.role
+        val canManageFees = role in FeePaymentValidator.AUTHORIZED_FINANCIAL_ROLES
+        val isSelfOrParent = role == UserRole.STUDENT || role == UserRole.PARENT
+        val isRestricted = role == null || (!canManageFees && !isSelfOrParent)
+
+        val tenantStudents = allStudentsList.filter { activeTenant.isBlank() || it.institutionId == activeTenant }
+        val filteredStudents = if (query.isBlank()) {
+            tenantStudents
+        } else {
+            val q = query.trim().lowercase(java.util.Locale.US)
+            tenantStudents.filter {
+                it.name.lowercase(java.util.Locale.US).contains(q) ||
+                    it.admissionNumber.lowercase(java.util.Locale.US).contains(q) ||
+                    "${it.grade}-${it.section}".lowercase(java.util.Locale.US).contains(q)
+            }
+        }
+        val selectedStudent = selectedStudentId?.let { id ->
+            tenantStudents.firstOrNull { it.id == id || it.admissionNumber == id }
+        }
+
+        val scopedStudentIds: Set<String>? = when {
+            canManageFees -> selectedStudent?.let { setOf(it.id, it.admissionNumber) }
+            role == UserRole.STUDENT -> {
+                val stuId = claims?.userId ?: session?.user?.id ?: ""
+                setOf(stuId)
+            }
+            role == UserRole.PARENT -> setOf(_selectedWardId.value)
+            else -> emptySet()
+        }
+
+        val scopedFees = if (isRestricted) {
+            emptyList()
+        } else {
+            allFeesList.filter { fee ->
+                (activeTenant.isBlank() || fee.institutionId == activeTenant) &&
+                    (scopedStudentIds == null || fee.studentId in scopedStudentIds || fee.admissionNumber in scopedStudentIds)
+            }
+        }
+
+        val scopedFeeIds = scopedFees.map { it.id }.toSet()
+        val scopedTxns = if (isRestricted) {
+            emptyList()
+        } else {
+            allTxnsList.filter { txn ->
+                (activeTenant.isBlank() || txn.institutionId == activeTenant) &&
+                    (scopedStudentIds == null || txn.studentId in scopedStudentIds || txn.feeRecordId in scopedFeeIds)
+            }.sortedByDescending { it.timestamp }
+        }
+
+        val summaries = scopedFees.map { record ->
+            val recordTxns = scopedTxns.filter {
+                it.feeRecordId == record.id && it.status !in setOf("REFUNDED", "VOID", "FAILED")
+            }
+            val confirmedPaid = recordTxns.sumOf { it.amountPaidPaise }
+            val outstanding = (record.totalAmount - confirmedPaid).coerceAtLeast(0L)
+            val status = when {
+                outstanding <= 0L && confirmedPaid >= record.totalAmount -> "PAID"
+                confirmedPaid > 0L -> "PARTIAL"
+                else -> "DUE"
+            }
+            FeeBalanceSummary(
+                feeRecord = record.copy(paidAmount = confirmedPaid, dueAmount = outstanding, status = status),
+                totalAmountPaise = record.totalAmount,
+                confirmedPaidPaise = confirmedPaid,
+                outstandingBalancePaise = outstanding,
+                confirmedTransactionCount = recordTxns.size,
+                transactions = recordTxns
+            )
+        }
+
+        val loadState = when {
+            isRestricted -> FeeLedgerLoadState.Restricted
+            !hasLoaded && summaries.isEmpty() -> FeeLedgerLoadState.Loading
+            summaries.isEmpty() -> FeeLedgerLoadState.Empty
+            else -> FeeLedgerLoadState.Ready(summaries)
+        }
+
+        val totalCollected = summaries.sumOf { it.confirmedPaidPaise }
+        val totalDue = summaries.sumOf { it.outstandingBalancePaise }
+        val pendingTxns = scopedTxns.count { !it.isSyncedToCentral }
+
+        flags.copy(
+            loadState = loadState,
+            activeTenantId = activeTenant,
+            actorRoleName = role?.name ?: "GUEST",
+            actorDisplayName = claims?.displayName ?: session?.user?.displayName ?: "",
+            isAuthorizedToManageFees = canManageFees,
+            isReadOnlySelfScope = isSelfOrParent,
+            studentSearchQuery = query,
+            matchedStudents = if (canManageFees) filteredStudents else emptyList(),
+            selectedStudent = selectedStudent,
+            feeSummaries = summaries,
+            transactions = scopedTxns,
+            totalCollectedPaise = totalCollected,
+            totalOutstandingPaise = totalDue,
+            settledAccountCount = summaries.count { it.outstandingBalancePaise == 0L && it.totalAmountPaise > 0L },
+            dueAccountCount = summaries.count { it.outstandingBalancePaise > 0L },
+            pendingSyncTransactionCount = pendingTxns,
+            isOnline = online
+        )
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5000),
+        FeeWorkflowUiState(loadState = FeeLedgerLoadState.Loading)
+    )
 
     val notifications: StateFlow<List<PushNotificationEntity>> = repository.getNotificationsForUser("INST-SXA-2026", "ALL")
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -280,13 +434,31 @@ class SchoolViewModel @Inject constructor(
     val pendingAuditSyncCount: StateFlow<Int> = immutableAuditService.pendingSyncCount
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
+    val cloudSyncManager: CloudSyncManager by lazy {
+        CloudSyncManager(repository.dao, repository.outboxManager)
+    }
+
+    val cloudSyncMessage: StateFlow<String> by lazy { cloudSyncManager.syncMessage }
+
     init {
+        // Observe live hardware connectivity when running with Android Context
+        if (context != null) {
+            val connectivityMonitor = com.example.data.remote.sync.NetworkConnectivityMonitor(context)
+            viewModelScope.launch {
+                connectivityMonitor.isConnected.collect { connected ->
+                    _isOnline.value = connected
+                    cloudSyncManager.setNetworkStatus(connected)
+                }
+            }
+        }
+
         // Start background periodic encrypted synchronization to compliance cloud
         immutableAuditService.startPeriodicSync(viewModelScope, intervalMillis = 60_000L)
 
         viewModelScope.launch {
             // Guarantee demo users and institution data are seeded in Room
             runCatching { repository.ensureDemoUsersAndDataSeeded() }
+            _hasLoadedFeeStream.value = true
 
             val isVerified = runCatching { prefsManager.isSchoolVerifiedOnce() }.getOrDefault(false)
             val isSetupCompleted = runCatching { prefsManager.isSetupCompletedOnce() }.getOrDefault(false)
@@ -567,31 +739,52 @@ class SchoolViewModel @Inject constructor(
     }
 
     fun logout() {
+        val user = _currentAuthSession.value?.user
+        val inst = _verifiedInstitution.value
+        val tokenSnapshot = _currentAuthSession.value?.token ?: "N/A"
+        val profileSnapshot = _userProfileName.value
+        val actorClaimsSnapshot = _userClaims.value
+        val actorRoleSnapshot = _currentRole.value
+
+        // Fail closed immediately: clear in-memory and session security state synchronously
+        com.example.security.SecureSessionManager.clearSession()
+        TenantSecurityContext.clearContext()
+        _currentAuthSession.value = null
+        _userClaims.value = null
+        _currentRole.value = UserRole.STUDENT
+        _userProfileName.value = ""
+        _isAuthenticated.value = false
+        _isPrincipalAuthenticated.value = false
+        _isTeacherAuthenticated.value = false
+        _isInchargeAuthenticated.value = false
+        _isStudentAuthenticated.value = false
+        _authenticatedTeacher.value = null
+        _authenticatedIncharge.value = null
+        _authenticatedStudent.value = null
+        _selectedFeeStudentId.value = null
+        _feeStudentQuery.value = ""
+        _feeOperationUiFlags.value = FeeWorkflowUiState()
+        _selectedWardId.value = "ADM-2026-001"
+        _authStage.value = AuthStage.CREDENTIALS_LOGIN
+        prefs?.edit()?.clear()?.apply()
+
         viewModelScope.launch {
-            val user = _currentAuthSession.value?.user
-            val inst = _verifiedInstitution.value
-            logAuditEvent(
-                action = "USER_LOGOUT_TERMINATED",
-                entityType = "SECURITY_SESSION",
-                entityId = _currentAuthSession.value?.token ?: "N/A",
-                previousState = "AUTHENTICATED",
-                newState = "TERMINATED",
-                remarks = "User '${user?.username ?: _userProfileName.value}' logged out of ${inst?.name ?: "Portal"}"
-            )
-
-            authRepository.signOut()
+            runCatching {
+                immutableAuditService.recordDatabaseTransaction(
+                    institutionId = inst?.institutionId ?: "INST-SXA-2026",
+                    action = "USER_LOGOUT_TERMINATED",
+                    entityType = "SECURITY_SESSION",
+                    entityId = tokenSnapshot,
+                    actorUserId = actorClaimsSnapshot?.userId ?: "SYSTEM_AUTH",
+                    actorName = actorClaimsSnapshot?.displayName ?: profileSnapshot,
+                    actorRole = actorClaimsSnapshot?.roleClaim ?: actorRoleSnapshot.roleClaim,
+                    previousState = "AUTHENTICATED",
+                    newState = "TERMINATED",
+                    remarks = "User '${user?.username ?: profileSnapshot}' logged out of ${inst?.name ?: "Portal"}"
+                )
+            }
+            runCatching { authRepository.signOut() }
             runCatching { prefsManager.clearSessionOnSignOut() }
-
-            _currentAuthSession.value = null
-            _userClaims.value = null
-            _isAuthenticated.value = false
-            _isPrincipalAuthenticated.value = false
-            _isTeacherAuthenticated.value = false
-            _isInchargeAuthenticated.value = false
-            _isStudentAuthenticated.value = false
-            _authStage.value = AuthStage.CREDENTIALS_LOGIN
-
-            prefs?.edit()?.clear()?.apply()
         }
     }
 
@@ -963,13 +1156,6 @@ class SchoolViewModel @Inject constructor(
     // SYNCHRONIZATION ENGINE & FIRESTORE CLOUD INTEGRATION
     // =========================================================================
 
-    val cloudSyncManager: CloudSyncManager by lazy {
-        val outbox = DurableOutboxManager(repository.dao)
-        CloudSyncManager(repository.dao, outbox)
-    }
-
-    val cloudSyncMessage: StateFlow<String> by lazy { cloudSyncManager.syncMessage }
-
     fun triggerSyncNow(onComplete: ((Boolean, String) -> Unit)? = null) {
         viewModelScope.launch {
             _isSyncing.value = true
@@ -1245,28 +1431,145 @@ class SchoolViewModel @Inject constructor(
     fun approveCertificatePrincipal(certId: String, remarks: String) = principalApproveCertificate(certId, remarks)
 
     // =========================================================================
-    // FEE MANAGEMENT & RECEIPTS
+    // FEE MANAGEMENT & RECEIPTS (PHASE D)
     // =========================================================================
 
+    fun updateFeeStudentQuery(query: String) {
+        _feeStudentQuery.value = query
+    }
+
+    fun selectFeeStudent(studentId: String?) {
+        _selectedFeeStudentId.value = studentId
+        _feeOperationUiFlags.update { it.copy(validationError = null) }
+    }
+
+    fun clearFeeFeedback() {
+        _feeOperationUiFlags.update { it.copy(validationError = null, feedbackMessage = null) }
+    }
+
+    fun dismissFeeReceiptPreview() {
+        _feeOperationUiFlags.update { it.copy(activeReceiptResult = null) }
+    }
+
+    fun createFeeAssessmentForStudent(
+        studentId: String,
+        term: String,
+        feeType: String,
+        totalAmountRupees: Long,
+        onResult: (Boolean, String) -> Unit = { _, _ -> }
+    ) {
+        viewModelScope.launch {
+            _feeOperationUiFlags.update { it.copy(isSubmitting = true, validationError = null, feedbackMessage = null) }
+            val result = repository.createFeeAssessmentSafe(
+                CreateFeeAssessmentRequest(
+                    institutionId = _verifiedInstitution.value?.institutionId,
+                    studentId = studentId,
+                    term = term,
+                    feeType = feeType,
+                    totalAmountPaise = totalAmountRupees * 100L
+                )
+            )
+            result.onSuccess { fee ->
+                _feeOperationUiFlags.update {
+                    it.copy(
+                        isSubmitting = false,
+                        feedbackMessage = "Fee assessment '${fee.feeType}' (₹${fee.totalRupees}) created for ${fee.studentName}. Queued for sync."
+                    )
+                }
+                onResult(true, "Fee assessment created for ${fee.studentName}.")
+            }.onFailure { err ->
+                val msg = err.localizedMessage ?: "Failed to create fee assessment."
+                _feeOperationUiFlags.update { it.copy(isSubmitting = false, validationError = msg) }
+                onResult(false, msg)
+            }
+        }
+    }
+
+    fun recordManualFeePayment(
+        studentId: String,
+        feeRecordId: String,
+        amountRupees: Long,
+        paymentMode: String,
+        transactionReference: String,
+        remarks: String = "",
+        idempotencyKey: String = java.util.UUID.randomUUID().toString(),
+        onResult: (Boolean, String, FeePaymentReceiptResult?) -> Unit = { _, _, _ -> }
+    ) {
+        viewModelScope.launch {
+            _feeOperationUiFlags.update { it.copy(isSubmitting = true, validationError = null, feedbackMessage = null) }
+            val result = repository.recordManualPaymentSafe(
+                ManualFeePaymentRequest(
+                    institutionId = _verifiedInstitution.value?.institutionId,
+                    studentId = studentId,
+                    feeRecordId = feeRecordId,
+                    amountPaise = amountRupees * 100L,
+                    paymentMode = paymentMode,
+                    transactionReference = transactionReference,
+                    remarks = remarks,
+                    idempotencyKey = idempotencyKey
+                )
+            )
+            result.onSuccess { receiptResult ->
+                _feeOperationUiFlags.update {
+                    it.copy(
+                        isSubmitting = false,
+                        feedbackMessage = "Manual receipt ${receiptResult.transaction.receiptNumber} recorded (PENDING_SYNC until server acknowledgement).",
+                        activeReceiptResult = receiptResult
+                    )
+                }
+                onResult(true, "Receipt ${receiptResult.transaction.receiptNumber} generated.", receiptResult)
+            }.onFailure { err ->
+                val msg = err.localizedMessage ?: "Failed to record fee payment."
+                _feeOperationUiFlags.update { it.copy(isSubmitting = false, validationError = msg) }
+                onResult(false, msg, null)
+            }
+        }
+    }
+
+    fun syncPendingFinancialOutbox() {
+        viewModelScope.launch {
+            _feeOperationUiFlags.update { it.copy(isSyncingOutbox = true, syncStatusMessage = "Syncing pending financial records...") }
+            val result = repository.feeRepository.syncPendingFinancialOutbox(forceAll = true)
+            result.onSuccess { batch ->
+                _feeOperationUiFlags.update {
+                    it.copy(
+                        isSyncingOutbox = false,
+                        syncStatusMessage = if (batch.acknowledgedCount > 0) {
+                            "Server confirmed ${batch.acknowledgedCount} record(s)."
+                        } else if (batch.failedCount > 0) {
+                            "Offline/retryable: ${batch.failedCount} record(s) preserved in local queue."
+                        } else if (batch.conflictCount > 0) {
+                            "Security/conflict on ${batch.conflictCount} record(s)."
+                        } else {
+                            "No pending financial records."
+                        }
+                    )
+                }
+            }.onFailure { err ->
+                _feeOperationUiFlags.update {
+                    it.copy(
+                        isSyncingOutbox = false,
+                        syncStatusMessage = err.localizedMessage ?: "Unable to sync financial records."
+                    )
+                }
+            }
+        }
+    }
+
+    @Deprecated("Use recordManualFeePayment which enforces role, tenant, balance, and atomic outbox integrity.")
     fun inchargeRecordFeePayment(feeId: String, paidAmount: Long, dueAmount: Long, receiptNo: String) {
         viewModelScope.launch {
-            val status = if (dueAmount <= 0L) "PAID" else "PARTIAL"
-            repository.recordFeePayment(
-                feeId = feeId,
-                paid = paidAmount,
-                due = dueAmount,
-                status = status,
-                receipt = receiptNo,
-                date = "2026-09-15"
-            )
-            val displayPaid = if (paidAmount >= 100000L) paidAmount / 100L else paidAmount
-            logAuditEvent(
-                action = "FEE_PAYMENT_RECORDED",
-                entityType = "FEE_RECORD",
-                entityId = feeId,
-                previousState = "DUE",
-                newState = status,
-                remarks = "Payment amount of  $displayPaid recorded with receipt: $receiptNo"
+            val fee = repository.dao.getFeeRecordById(feeId) ?: return@launch
+            repository.recordManualPaymentSafe(
+                ManualFeePaymentRequest(
+                    institutionId = fee.institutionId,
+                    studentId = fee.studentId,
+                    feeRecordId = feeId,
+                    amountPaise = if (paidAmount >= 100000L) paidAmount else paidAmount * 100L,
+                    paymentMode = "CASH",
+                    transactionReference = receiptNo,
+                    customReceiptNumber = receiptNo
+                )
             )
         }
     }
@@ -1769,52 +2072,21 @@ class SchoolViewModel @Inject constructor(
         feeRecord: FeeRecordEntity,
         amountRupees: Long,
         paymentMode: String,
+        transactionReference: String = "",
+        remarks: String = "",
+        idempotencyKey: String = java.util.UUID.randomUUID().toString(),
         onResult: (Boolean, String) -> Unit
     ) {
-        viewModelScope.launch {
-            val instId = _verifiedInstitution.value?.institutionId ?: "INST-SXA-2026"
-            val amountPaise = amountRupees * 100L
-            val newPaidPaise = feeRecord.paidAmount + amountPaise
-            val newDuePaise = (feeRecord.totalAmount - newPaidPaise).coerceAtLeast(0L)
-            val newStatus = if (newDuePaise <= 0L) "PAID" else "PARTIAL"
-            val receiptNo = "SXA-REC-${System.currentTimeMillis() % 100000}"
-
-            val txn = FeePaymentTransactionEntity(
-                transactionId = "TXN-${System.currentTimeMillis() % 100000}",
-                institutionId = instId,
-                feeRecordId = feeRecord.id,
-                studentId = feeRecord.studentId,
-                studentName = feeRecord.studentName,
-                amountPaidPaise = amountPaise,
-                paymentMode = paymentMode,
-                transactionReference = "REF-${System.currentTimeMillis() % 1000000}",
-                receiptNumber = receiptNo,
-                cashierName = _userProfileName.value,
-                status = "SUCCESS"
-            )
-
-            val auditLog = AuditLogEntity(
-                institutionId = instId,
-                action = "FEE_PAYMENT_PROCESSED",
-                entityType = "FeeRecord",
-                entityId = feeRecord.id,
-                actorUserId = _userClaims.value?.userId ?: "BURSAR",
-                actorName = _userProfileName.value,
-                actorRole = _currentRole.value.roleClaim,
-                previousState = feeRecord.status,
-                newState = newStatus,
-                remarks = "Recorded payment of ₹$amountRupees for ${feeRecord.studentName}. Receipt: $receiptNo"
-            )
-
-            repository.recordFeePaymentAtomic(
-                feeId = feeRecord.id,
-                transaction = txn,
-                paidPaise = newPaidPaise,
-                duePaise = newDuePaise,
-                status = newStatus,
-                auditLog = auditLog
-            )
-            onResult(true, "Payment recorded successfully. Receipt #$receiptNo generated.")
+        recordManualFeePayment(
+            studentId = feeRecord.studentId,
+            feeRecordId = feeRecord.id,
+            amountRupees = amountRupees,
+            paymentMode = paymentMode,
+            transactionReference = transactionReference,
+            remarks = remarks,
+            idempotencyKey = idempotencyKey
+        ) { success, message, _ ->
+            onResult(success, message)
         }
     }
 

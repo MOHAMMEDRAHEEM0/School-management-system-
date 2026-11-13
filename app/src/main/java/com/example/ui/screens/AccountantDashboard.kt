@@ -29,12 +29,13 @@ import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -53,6 +54,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.entities.FeeRecordEntity
+import com.example.data.repository.FeeBalanceSummary
 import com.example.ui.components.GlassBadge
 import com.example.ui.components.GlassButton
 import com.example.ui.components.GlassCard
@@ -79,14 +81,15 @@ fun AccountantDashboard(
     val context = LocalContext.current
     var selectedTab by remember { mutableIntStateOf(0) }
 
-    val feeRecords by viewModel.feeRecords.collectAsState()
+    val feeWorkflowState by viewModel.feeWorkflowState.collectAsState()
     val bills by viewModel.institutionalBills.collectAsState()
 
-    // Dialog for Fee Collection Entry
+    // Dialog for Manual Fee Collection Entry
     var showFeeEntryDialog by remember { mutableStateOf(false) }
-    var selectedFee by remember { mutableStateOf<FeeRecordEntity?>(null) }
-    var enteredAmount by remember { mutableStateOf("15000") }
-    var paymentMode by remember { mutableStateOf("UPI_DIGITAL") }
+    var selectedSummary by remember { mutableStateOf<FeeBalanceSummary?>(null) }
+    var enteredAmount by remember { mutableStateOf("") }
+    var paymentMode by remember { mutableStateOf("CASH") }
+    var paymentReference by remember { mutableStateOf("") }
 
     Column(
         modifier = Modifier
@@ -102,21 +105,29 @@ fun AccountantDashboard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     Text(
                         text = "Finance & Bursar Desk",
                         fontSize = 17.sp,
                         fontWeight = FontWeight.Black,
-                        color = GovNavyDark
+                        color = GovNavyDark,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     GlassBadge(text = "ACCOUNTS HEAD", color = Color(0xFFD97706))
                 }
                 Text(
-                    text = "Suresh Mehta | Head of Institutional Accounts & Bursar Directorate",
+                    text = "${feeWorkflowState.actorDisplayName.ifBlank { "Accounts Officer" }} | Institutional Bursar Directorate",
                     fontSize = 10.5.sp,
-                    color = GovSlateMuted
+                    color = GovSlateMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
 
@@ -130,7 +141,9 @@ fun AccountantDashboard(
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // Financial KPIs
+        // Financial KPIs derived strictly from persisted Room transactions
+        val collectedRupees = feeWorkflowState.totalCollectedPaise / 100L
+        val outstandingRupees = feeWorkflowState.totalOutstandingPaise / 100L
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -142,46 +155,55 @@ fun AccountantDashboard(
             ) {
                 Column {
                     Text(
-                        text = " 1.80 L",
+                        text = "₹$collectedRupees",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Black,
                         color = GovGreen
                     )
-                    Text(text = "Term 1 Tuition", fontSize = 8.5.sp, color = GovSlateMuted)
+                    Text(
+                        text = "${feeWorkflowState.settledAccountCount} Settled • ${feeWorkflowState.pendingSyncTransactionCount} Pending Sync",
+                        fontSize = 8.5.sp,
+                        color = GovSlateMuted
+                    )
                 }
             }
 
             GlassCard(
                 modifier = Modifier.weight(1f),
-                headerRibbonColor = GovRedAlert,
+                headerRibbonColor = if (outstandingRupees > 0L) GovRedAlert else GovGreen,
                 headerTitle = "OUTSTANDING"
             ) {
                 Column {
                     Text(
-                        text = " 15,000",
+                        text = "₹$outstandingRupees",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Black,
-                        color = GovRedAlert
+                        color = if (outstandingRupees > 0L) GovRedAlert else GovGreen
                     )
-                    Text(text = "1 Pending Scholar", fontSize = 8.5.sp, color = GovSlateMuted)
+                    Text(
+                        text = "${feeWorkflowState.dueAccountCount} Pending Account(s)",
+                        fontSize = 8.5.sp,
+                        color = GovSlateMuted
+                    )
                 }
             }
         }
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Tabs
+        // Scrollable Tabs to prevent narrow-screen text wrapping
         Surface(
             shape = RoundedCornerShape(8.dp),
             color = PureWhite,
             border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorderLight),
             modifier = Modifier.fillMaxWidth()
         ) {
-            TabRow(
+            ScrollableTabRow(
                 selectedTabIndex = selectedTab,
                 containerColor = PureWhite,
+                edgePadding = 12.dp,
                 indicator = { tabPositions ->
-                    TabRowDefaults.Indicator(
+                    TabRowDefaults.SecondaryIndicator(
                         modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
                         color = GovNavyPrimary,
                         height = 3.dp
@@ -191,22 +213,22 @@ fun AccountantDashboard(
                 Tab(
                     selected = selectedTab == 0,
                     onClick = { selectedTab = 0 },
-                    text = { Text("Fee Ledger", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
+                    text = { Text("Fee Ledger", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
                 )
                 Tab(
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 },
-                    text = { Text("Defaulters & WhatsApp", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
+                    text = { Text("Defaulters & Notices", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
                 )
                 Tab(
                     selected = selectedTab == 2,
                     onClick = { selectedTab = 2 },
-                    text = { Text("Institution Bills", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
+                    text = { Text("Institution Bills", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
                 )
                 Tab(
                     selected = selectedTab == 3,
                     onClick = { selectedTab = 3 },
-                    text = { Text("Payment Sandbox", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) },
+                    text = { Text("Gateway Status", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) },
                     modifier = Modifier.testTag("tab_accountant_payment_sandbox")
                 )
             }
@@ -219,10 +241,18 @@ fun AccountantDashboard(
         // =====================================================================
         if (selectedTab == 0) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                feeRecords.forEach { fee ->
-                    val displayTotal = if (fee.totalAmount >= 100000L) fee.totalAmount / 100L else fee.totalAmount
-                    val displayPaid = if (fee.paidAmount >= 100000L) fee.paidAmount / 100L else fee.paidAmount
-                    val displayDue = if (fee.dueAmount >= 100000L) fee.dueAmount / 100L else fee.dueAmount
+                if (feeWorkflowState.feeSummaries.isEmpty()) {
+                    Text(
+                        text = "No persisted fee records found for this institution yet. Open Treasury to issue a new fee assessment.",
+                        fontSize = 12.sp,
+                        color = GovSlateMuted
+                    )
+                }
+                feeWorkflowState.feeSummaries.forEach { summary ->
+                    val fee = summary.feeRecord
+                    val displayTotal = summary.totalAmountPaise / 100L
+                    val displayPaid = summary.confirmedPaidPaise / 100L
+                    val displayDue = summary.outstandingBalancePaise / 100L
 
                     GlassCard(
                         modifier = Modifier.fillMaxWidth(),
@@ -236,7 +266,7 @@ fun AccountantDashboard(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column {
+                                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                     Text(
                                         text = fee.feeType,
                                         fontSize = 12.5.sp,
@@ -244,12 +274,12 @@ fun AccountantDashboard(
                                         color = GovSlateDark
                                     )
                                     Text(
-                                        text = "Adm No: ${fee.admissionNumber} | Receipt: ${fee.receiptNumber ?: "PENDING"}",
+                                        text = "Adm No: ${fee.admissionNumber} | Latest Receipt: ${fee.receiptNumber ?: "NONE"}",
                                         fontSize = 10.sp,
                                         color = GovSlateMuted
                                     )
                                     Text(
-                                        text = "Paid:  $displayPaid /  $displayTotal",
+                                        text = "Paid: ₹$displayPaid / ₹$displayTotal",
                                         fontSize = 10.5.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = GovNavyPrimary
@@ -258,10 +288,12 @@ fun AccountantDashboard(
 
                                 if (displayDue > 0) {
                                     GlassButton(
-                                        text = "Collect  $displayDue",
+                                        text = "Collect ₹$displayDue",
                                         onClick = {
-                                            selectedFee = fee
+                                            selectedSummary = summary
                                             enteredAmount = displayDue.toString()
+                                            paymentMode = "CASH"
+                                            paymentReference = ""
                                             showFeeEntryDialog = true
                                         },
                                         color = GovGreen
@@ -288,17 +320,18 @@ fun AccountantDashboard(
                     color = GovNavyDark
                 )
 
-                val defaulters = feeRecords.filter { it.status != "PAID" }
+                val defaulters = feeWorkflowState.feeSummaries.filter { it.outstandingBalancePaise > 0L }
                 if (defaulters.isEmpty()) {
                     Text("No outstanding defaulters in active roster.", fontSize = 11.sp, color = GovGreen)
                 } else {
-                    defaulters.forEach { def ->
-                        val displayDue = if (def.dueAmount >= 100000L) def.dueAmount / 100L else def.dueAmount
+                    defaulters.forEach { summary ->
+                        val def = summary.feeRecord
+                        val displayDue = summary.outstandingBalancePaise / 100L
                         GlassCard(
                             modifier = Modifier.fillMaxWidth(),
                             headerRibbonColor = GovRedAlert,
                             headerTitle = "DEFAULTER: ${def.studentName.uppercase()}",
-                            headerBadge = "DUE:  $displayDue"
+                            headerBadge = "DUE: ₹$displayDue"
                         ) {
                             Column {
                                 Text(
@@ -308,14 +341,14 @@ fun AccountantDashboard(
                                     color = GovSlateDark
                                 )
                                 Text(
-                                    text = "Outstanding composite fee balance of  $displayDue for ${def.term}.",
+                                    text = "Outstanding fee balance of ₹$displayDue for ${def.term}.",
                                     fontSize = 10.5.sp,
                                     color = GovRedAlert
                                 )
                                 Spacer(modifier = Modifier.height(10.dp))
                                 OfficialWhatsAppButton(
                                     phone = "9123456783",
-                                    message = "Official Notice from St. Xavier's International Academy Finance Directorate: This is a polite reminder that Term 1 fees of  $displayDue for ${def.studentName} are due. Kindly clear the dues through the school portal.",
+                                    message = "Official Notice from ${feeWorkflowState.activeTenantId} Finance Directorate: Outstanding fees of ₹$displayDue for ${def.studentName} (${def.term}) remain due.",
                                     label = "Dispatch Official WhatsApp Fee Notice",
                                     modifier = Modifier.fillMaxWidth()
                                 )
@@ -364,7 +397,7 @@ fun AccountantDashboard(
                                 )
                             }
                             Text(
-                                text = " ${bill.amountRupees}",
+                                text = "₹${bill.amountRupees}",
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.Black,
                                 color = GovNavyDark
@@ -376,55 +409,78 @@ fun AccountantDashboard(
         }
 
         // =====================================================================
-        // TAB 3: PAYMENT SANDBOX DASHBOARD (ADMIN WEBHOOK & LEDGER VERIFIER)
+        // TAB 3: GATEWAY STATUS (NO LIVE PROVIDER CONFIGURED)
         // =====================================================================
         if (selectedTab == 3) {
-            com.example.ui.components.PaymentSandboxDashboard(
-                viewModel = viewModel,
-                modifier = Modifier.fillMaxWidth()
-            )
+            GlassCard(
+                modifier = Modifier.fillMaxWidth(),
+                headerRibbonColor = GovNavyPrimary,
+                headerTitle = "PAYMENT GATEWAY STATUS",
+                headerBadge = "NOT CONFIGURED"
+            ) {
+                Text(
+                    text = "No live online payment gateway provider or webhook merchant key is configured on this build. Use the Fee Ledger or Treasury tab to record manual counter payments (MANUAL_RECORDED) with unique receipts.",
+                    fontSize = 11.5.sp,
+                    color = GovSlateDark
+                )
+            }
         }
     }
 
-    // Fee Collection Entry Dialog
-    if (showFeeEntryDialog && selectedFee != null) {
-        val fee = selectedFee!!
+    // Manual Counter Fee Collection Entry Dialog
+    if (showFeeEntryDialog && selectedSummary != null) {
+        val summary = selectedSummary!!
+        val fee = summary.feeRecord
+        val maxRupees = summary.outstandingBalancePaise / 100L
+        val dialogIdempotencyKey = remember(fee.id, showFeeEntryDialog) { java.util.UUID.randomUUID().toString() }
         AlertDialog(
             onDismissRequest = { showFeeEntryDialog = false },
             title = {
-                Text("Process Fee Collection", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text("Record Manual Counter Payment", fontSize = 14.sp, fontWeight = FontWeight.Bold)
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Scholar: ${fee.studentName} (${fee.gradeSection})", fontSize = 11.sp, color = GovSlateMuted)
+                    Text(
+                        "Scholar: ${fee.studentName} (${fee.gradeSection}) • Max Due: ₹$maxRupees",
+                        fontSize = 11.sp,
+                        color = GovSlateMuted
+                    )
                     GlassTextField(
                         value = enteredAmount,
-                        onValueChange = { enteredAmount = it },
+                        onValueChange = { enteredAmount = it.filter { ch -> ch.isDigit() } },
                         placeholder = "Amount in Rupees",
-                        label = "Amount Collected ()"
+                        label = "Amount Collected (₹)"
                     )
                     GlassTextField(
                         value = paymentMode,
                         onValueChange = { paymentMode = it },
-                        placeholder = "CASH, CHEQUE, UPI, or CARD",
-                        label = "Payment Mode"
+                        placeholder = "CASH, CHEQUE, BANK_TRANSFER, UPI_MANUAL, DD",
+                        label = "Manual Payment Mode"
+                    )
+                    GlassTextField(
+                        value = paymentReference,
+                        onValueChange = { paymentReference = it },
+                        placeholder = "Counter slip / Cheque / UTR ref",
+                        label = "Reference Number"
                     )
                 }
             },
             confirmButton = {
                 GlassButton(
-                    text = "Generate Official Receipt",
+                    text = "Record & Issue Receipt",
                     onClick = {
-                        val amount = enteredAmount.toLongOrNull() ?: 15000L
-                        val receiptNo = "SXA-REC-2026-${(8000..9999).random()}"
-                        viewModel.inchargeRecordFeePayment(
-                            feeId = fee.id,
-                            paidAmount = amount,
-                            dueAmount = 0L,
-                            receiptNo = receiptNo
-                        )
-                        Toast.makeText(context, "Payment committed! Receipt No: $receiptNo", Toast.LENGTH_LONG).show()
-                        showFeeEntryDialog = false
+                        val amount = enteredAmount.toLongOrNull() ?: 0L
+                        viewModel.recordManualFeePayment(
+                            studentId = fee.studentId,
+                            feeRecordId = fee.id,
+                            amountRupees = amount,
+                            paymentMode = paymentMode,
+                            transactionReference = paymentReference,
+                            idempotencyKey = dialogIdempotencyKey
+                        ) { ok, msg, _ ->
+                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                            if (ok) showFeeEntryDialog = false
+                        }
                     }
                 )
             },

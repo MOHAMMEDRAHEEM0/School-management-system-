@@ -6,6 +6,8 @@ import com.example.data.repository.AuditLoggerRepository
 import com.example.data.repository.AuditLoggerRepositoryImpl
 import com.example.data.repository.AuthRepository
 import com.example.data.repository.AuthRepositoryImpl
+import com.example.data.repository.FeeRepository
+import com.example.data.repository.FeeRepositoryImpl
 import com.example.data.repository.UserRepository
 import com.example.data.repository.UserRepositoryImpl
 import dagger.Binds
@@ -25,6 +27,10 @@ abstract class RepositoryModule {
     @Binds
     @Singleton
     abstract fun bindAttendanceRepository(impl: AttendanceRepositoryImpl): AttendanceRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindFeeRepository(impl: FeeRepositoryImpl): FeeRepository
 
     @Binds
     @Singleton

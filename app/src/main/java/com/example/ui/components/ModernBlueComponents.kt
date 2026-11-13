@@ -63,6 +63,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.repository.AiAcademicAssistant
@@ -176,13 +177,19 @@ fun ModernExecutiveShortcutCard(
 
                 Spacer(modifier = Modifier.width(14.dp))
 
-                Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
                         Text(
                             text = title,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
-                            color = ModernTextPrimary
+                            color = ModernTextPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Surface(
@@ -195,6 +202,8 @@ fun ModernExecutiveShortcutCard(
                                 fontSize = 9.5.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = badgeColor,
+                                maxLines = 1,
+                                softWrap = false,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
                         }
@@ -251,7 +260,10 @@ fun ExecutiveCommandShortcutsDeck(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f).padding(end = 8.dp)
+            ) {
                 Box(
                     modifier = Modifier
                         .size(8.dp)
@@ -264,7 +276,9 @@ fun ExecutiveCommandShortcutsDeck(
                     fontSize = 11.5.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = ModernBlue800,
-                    letterSpacing = 0.6.sp
+                    letterSpacing = 0.6.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
 
@@ -278,6 +292,8 @@ fun ExecutiveCommandShortcutsDeck(
                     fontSize = 9.sp,
                     fontWeight = FontWeight.Bold,
                     color = ModernBlue700,
+                    maxLines = 1,
+                    softWrap = false,
                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                 )
             }

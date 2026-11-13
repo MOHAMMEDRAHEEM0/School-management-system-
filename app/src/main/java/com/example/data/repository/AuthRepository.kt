@@ -183,7 +183,9 @@ class AuthRepositoryImpl @Inject constructor(
             val auth = try {
                 getAuthInstance()
             } catch (e: Exception) {
-                return@withContext authenticateLocally(cleanId, targetEmail, cleanPass, institutionId)
+                val errorMsg = "Firebase Authentication service is unavailable: ${e.message}"
+                _authState.value = AuthState.Error(errorMsg)
+                return@withContext Result.failure(com.example.security.FirebaseConfigurationException(errorMsg))
             }
 
             // 1. Authoritative Firebase Authentication (FAIL-CLOSED)
@@ -790,18 +792,31 @@ class AuthRepositoryImpl @Inject constructor(
                 return@withContext try {
                     val tokenResult = currentUser.getIdToken(false).await()
                     val idToken = tokenResult.token ?: cachedSession.sessionToken
-                    val institutionId = (tokenResult.claims["tenantId"] as? String) ?: cachedSession.institutionId
+                    val institutionId = (tokenResult.claims["tenantId"] as? String)
+                        ?: (tokenResult.claims["institutionId"] as? String)
+                        ?: cachedSession.institutionId
                     val roleStr = tokenResult.claims["role"] as? String
                     val role = if (!roleStr.isNullOrBlank()) {
                         runCatching { UserRole.valueOf(roleStr.removePrefix("ROLE_").uppercase()) }.getOrDefault(cachedSession.role)
                     } else {
                         cachedSession.role
                     }
+                    val claimsAssignedSection = (tokenResult.claims["assignedClassSection"] as? String)
+                        ?: cachedSession.claims.assignedClassSection
+                    val updatedClaims = cachedSession.claims.copy(
+                        role = role,
+                        roleClaim = role.roleClaim,
+                        permissions = getDefaultPermissionsForRole(role),
+                        assignedClassSection = claimsAssignedSection,
+                        sessionToken = idToken,
+                        authenticatedAt = System.currentTimeMillis()
+                    )
 
                     val updated = cachedSession.copy(
                         sessionToken = idToken,
                         institutionId = institutionId,
                         role = role,
+                        claims = updatedClaims,
                         authProvider = "FIREBASE_ONLINE_VERIFIED",
                         expiresAt = tokenResult.expirationTimestamp * 1000L
                     )
@@ -845,17 +860,30 @@ class AuthRepositoryImpl @Inject constructor(
                 return@withContext refreshToken()
             }
 
-            val institutionId = (tokenResult.claims["tenantId"] as? String) ?: "INST-SXA-2026"
+            val claimsTenant = (tokenResult.claims["tenantId"] as? String)
+                ?: (tokenResult.claims["institutionId"] as? String)
+            val localUser = schoolDao.getUserById(currentUser.uid)
+                ?: currentUser.email?.takeIf { it.isNotBlank() }?.let { schoolDao.getUserByUsernameOrPhone(it) }
+            val institutionId = claimsTenant?.takeIf { it.isNotBlank() }
+                ?: localUser?.institutionId?.takeIf { it.isNotBlank() }
+                ?: throw TenantSecurityException("Restored Firebase session has no assigned institution/tenant claim.")
+
             val roleStr = tokenResult.claims["role"] as? String
             val role = if (!roleStr.isNullOrBlank()) {
                 runCatching { UserRole.valueOf(roleStr.removePrefix("ROLE_").uppercase()) }.getOrDefault(UserRole.STUDENT)
             } else {
-                UserRole.STUDENT
+                localUser?.let { runCatching { UserRole.valueOf(it.role.uppercase()) }.getOrNull() }
+                    ?: UserRole.STUDENT
             }
 
-            val email = currentUser.email ?: ""
-            val name = currentUser.displayName ?: email.substringBefore("@")
+            val email = currentUser.email ?: localUser?.email ?: ""
+            val name = currentUser.displayName ?: localUser?.displayName ?: email.substringBefore("@")
             val permissions = getDefaultPermissionsForRole(role)
+            val assignedSection = (tokenResult.claims["assignedClassSection"] as? String)
+                ?: if (role == UserRole.INCHARGE || role == UserRole.TEACHER) {
+                    schoolDao.getStaffById(currentUser.uid)?.inchargeClass
+                        ?: localUser?.let { schoolDao.getStaffById(it.id)?.inchargeClass }
+                } else null
 
             val claims = SecurityClaims(
                 userId = currentUser.uid,
@@ -863,6 +891,7 @@ class AuthRepositoryImpl @Inject constructor(
                 roleClaim = role.roleClaim,
                 displayName = name,
                 email = email,
+                assignedClassSection = assignedSection,
                 permissions = permissions,
                 sessionToken = idToken
             )

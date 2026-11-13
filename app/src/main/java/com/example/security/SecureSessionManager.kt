@@ -34,20 +34,16 @@ object SecureSessionManager {
         require(session.userId.isNotBlank()) { "User ID cannot be blank in session" }
         require(session.institutionId.isNotBlank()) { "Institution ID cannot be blank in session" }
 
-        val validatedSession = if (session.expiresAt <= System.currentTimeMillis()) {
-            session.copy(
-                issuedAt = System.currentTimeMillis(),
-                expiresAt = System.currentTimeMillis() + SESSION_TTL_MILLIS
-            )
-        } else {
-            session
+        if (session.expiresAt <= System.currentTimeMillis()) {
+            clearSession()
+            throw SessionExpiredException("Cannot activate an expired session. Fresh authentication required.")
         }
 
-        activeSession = validatedSession
-        _sessionFlow.value = validatedSession
+        activeSession = session
+        _sessionFlow.value = session
 
         // Propagate to TenantSecurityContext
-        TenantSecurityContext.setContext(validatedSession.claims, validatedSession.institutionId)
+        TenantSecurityContext.setContext(session.claims, session.institutionId)
     }
 
     /**

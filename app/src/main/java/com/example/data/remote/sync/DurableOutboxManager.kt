@@ -227,17 +227,37 @@ class DurableOutboxManager(
                             ackToken = result.ackToken,
                             ackTimestamp = result.serverTimestamp
                         )
-                        // Genuine server acknowledgement: mark mirrored attendance record as synced in Room
+                        // Genuine server acknowledgement: mark mirrored attendance or fee transaction as synced in Room
                         if (item.entityType.uppercase() in setOf("ATTENDANCE", "ATTENDANCE_RECORD")) {
                             runCatching {
-                                val parts = item.entityId.split("_")
-                                if (parts.size >= 3) {
-                                    dao.markAttendanceRecordSynced(
-                                        classSection = parts[0].trim(),
-                                        date = parts[1].trim(),
-                                        personId = parts[2].trim()
+                                val json = runCatching { JSONObject(item.payloadJson) }.getOrNull()
+                                val parts = item.entityId.split("_", limit = 3)
+                                val classSection = json?.optString("classSection", "")
+                                    ?.takeIf { it.isNotBlank() }
+                                    ?: parts.getOrNull(0)?.trim().orEmpty()
+                                val date = json?.optString("date", "")
+                                    ?.takeIf { it.isNotBlank() }
+                                    ?: parts.getOrNull(1)?.trim().orEmpty()
+                                val personId = json?.optString("personId", "")
+                                    ?.takeIf { it.isNotBlank() }
+                                    ?: json?.optString("studentId", "")?.takeIf { it.isNotBlank() }
+                                    ?: parts.getOrNull(2)?.trim().orEmpty()
+
+                                if (classSection.isNotBlank() && date.isNotBlank() && personId.isNotBlank()) {
+                                    dao.markAttendanceRecordSyncedInTenant(
+                                        institutionId = item.institutionId,
+                                        classSection = classSection.trim(),
+                                        date = date.trim(),
+                                        personId = personId.trim()
                                     )
                                 }
+                            }
+                        } else if (item.entityType.uppercase() in setOf("FEE_PAYMENT", "FEE_TRANSACTION")) {
+                            runCatching {
+                                dao.markPaymentTransactionSynced(
+                                    transactionId = item.entityId,
+                                    ackToken = result.ackToken
+                                )
                             }
                         }
                         ackCount++
@@ -249,6 +269,9 @@ class DurableOutboxManager(
                             outboxId = item.outboxId,
                             error = result.reason
                         )
+                        if (item.entityType.uppercase() in setOf("FEE_PAYMENT", "FEE_TRANSACTION")) {
+                            runCatching { dao.markPaymentTransactionConflict(item.entityId) }
+                        }
                         conflictCount++
                         details.add("[CONFLICT] ${item.entityType}:${item.entityId} -> ${result.reason}")
                     }
@@ -397,11 +420,9 @@ class FirestoreCloudOutboxDispatcher : CloudOutboxDispatcher {
         val auth = runCatching { FirebaseAuth.getInstance() }.getOrNull()
         val currentUser = auth?.currentUser
         val isFirebaseAvailable = runCatching {
-            val apps = FirebaseApp.getApps(com.example.SchoolApplication())
-            if (apps.isEmpty()) false else {
-                val key = apps[0].options.apiKey
-                key.isNotBlank() && !key.startsWith("AIzaSyMock")
-            }
+            val app = FirebaseApp.getInstance()
+            val key = app.options.apiKey
+            key.isNotBlank() && !key.startsWith("AIzaSyMock")
         }.getOrDefault(false)
 
         if (isFirebaseAvailable && currentUser != null) {
@@ -414,7 +435,8 @@ class FirestoreCloudOutboxDispatcher : CloudOutboxDispatcher {
                     "ATTENDANCE_BATCH_VERIFICATION" -> "attendance_verifications"
                     "ATTENDANCE_BATCH_APPROVAL" -> "attendance_approvals"
                     "EXAM", "EXAM_RECORD" -> "exam_records"
-                    "FEE_RECORD", "FEE_PAYMENT", "FEE_TRANSACTION" -> "fee_records"
+                    "FEE_PAYMENT", "FEE_TRANSACTION" -> "payment_transactions"
+                    "FEE_RECORD", "FEE_INVOICE" -> "fee_invoices"
                     "CERTIFICATE" -> "certificates"
                     "ID_CARD", "ID_CARD_RECORD" -> "id_card_records"
                     "CIRCULAR", "NOTICE" -> "notices"
@@ -447,7 +469,20 @@ class FirestoreCloudOutboxDispatcher : CloudOutboxDispatcher {
                         "payloadVersion" to item.payloadVersion
                     )
                     payloadMap.putAll(structuredData)
-                    docRef.set(payloadMap, SetOptions.merge()).await()
+                    if (collectionName == "payment_transactions") {
+                        // firestore.rules enforces create-only immutability on payment_transactions (allow update, delete: if false).
+                        // Perform idempotent existence verification so retries with the same idempotencyKey don't trigger UPDATE PERMISSION_DENIED.
+                        val existingDoc = docRef.get().await()
+                        if (!existingDoc.exists()) {
+                            docRef.set(payloadMap).await()
+                        } else if (existingDoc.getString("idempotencyKey") != item.idempotencyKey) {
+                            return DurableOutboxManager.CloudDispatchResult.Conflict(
+                                reason = "Idempotency mismatch on existing server payment document ${item.entityId}"
+                            )
+                        }
+                    } else {
+                        docRef.set(payloadMap, SetOptions.merge()).await()
+                    }
                 }
 
                 val serverToken = "ACK-FS-${item.institutionId.takeLast(4)}-${UUID.randomUUID().toString().take(8).uppercase()}"

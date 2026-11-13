@@ -52,8 +52,8 @@ data class AttendanceSummary(
 data class TeacherAttendanceUiState(
     val selectedClass: String = "10-A",
     val availableClasses: List<String> = listOf("10-A", "10-B", "9-A", "9-B", "8-A", "11-A", "12-A"),
-    val selectedDate: String = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date()),
-    val displayDate: String = SimpleDateFormat("EEE, dd MMM yyyy", Locale.getDefault()).format(Date()),
+    val selectedDate: String = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date()),
+    val displayDate: String = SimpleDateFormat("EEE, dd MMM yyyy", Locale.US).format(Date()),
     val selectedSession: String = "Morning Assembly",
     val availableSessions: List<String> = listOf(
         "Morning Assembly",
@@ -100,10 +100,11 @@ class TeacherAttendanceViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(TeacherAttendanceUiState())
     val uiState: StateFlow<TeacherAttendanceUiState> = _uiState.asStateFlow()
 
-    private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-    private val displayFormat = SimpleDateFormat("EEE, dd MMM yyyy", Locale.getDefault())
+    private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+    private val displayFormat = SimpleDateFormat("EEE, dd MMM yyyy", Locale.US)
 
     private val effectiveOutboxManager = outboxManager ?: schoolRepository.outboxManager
+    private var activeActorRole: String = "TEACHER"
 
     init {
         // Resolve active tenant and authenticated teacher from Security Claims
@@ -116,6 +117,7 @@ class TeacherAttendanceViewModel @Inject constructor(
         val tName = activeClaims?.displayName ?: "Faculty Member"
         val tId = activeClaims?.userId ?: "FAC-TCH-01"
         val role = activeClaims?.role
+        activeActorRole = role?.name ?: "TEACHER"
 
         val isSystemAdmin = role in setOf(
             com.example.data.model.UserRole.ADMIN,
@@ -140,9 +142,10 @@ class TeacherAttendanceViewModel @Inject constructor(
             )
         }
 
-        // Dynamically load assigned classes
+        // Dynamically load assigned classes strictly within active tenant
         viewModelScope.launch {
             val allClasses = schoolRepository.getAllAcademicClassesList()
+                .filter { it.institutionId == activeTenant }
             val available = if (isSystemAdmin) {
                 val mapped = allClasses.map { "${it.className}-${it.section}".replace("Grade ", "").replace("Class ", "") }.distinct()
                 mapped.ifEmpty { listOf("10-A", "10-B", "9-A", "9-B", "8-A") }
@@ -440,13 +443,13 @@ class TeacherAttendanceViewModel @Inject constructor(
                     AuditLogEntity(
                         institutionId = currentState.institutionId,
                         timestamp = timestamp,
-                        formattedTime = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.getDefault()).format(Date(timestamp)),
+                        formattedTime = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).format(Date(timestamp)),
                         action = "RECORD_DAILY_ATTENDANCE",
                         entityType = "ATTENDANCE_REGISTER",
                         entityId = "${currentState.selectedClass}_${currentState.selectedDate}",
                         actorUserId = currentState.teacherId,
                         actorName = currentState.teacherName,
-                        actorRole = "TEACHER",
+                        actorRole = activeActorRole,
                         previousState = if (existing.isNotEmpty()) "PREVIOUSLY_RECORDED" else "PENDING",
                         newState = "COMMITTED_ROOM",
                         remarks = "Attendance marked for ${currentState.selectedClass} on ${currentState.selectedDate}: ${currentState.summary.presentCount} P, ${currentState.summary.absentCount} A, ${currentState.summary.lateCount} L (${currentState.summary.attendancePercentage}%)"
@@ -505,13 +508,13 @@ class TeacherAttendanceViewModel @Inject constructor(
                     AuditLogEntity(
                         institutionId = currentState.institutionId,
                         timestamp = timestamp,
-                        formattedTime = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.getDefault()).format(Date(timestamp)),
+                        formattedTime = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).format(Date(timestamp)),
                         action = "WHATSAPP_ATTENDANCE_PUSH_DISPATCH",
                         entityType = "WHATSAPP_PUSH_DISPATCHER",
                         entityId = "${currentState.selectedClass}_${currentState.selectedDate}",
                         actorUserId = currentState.teacherId,
                         actorName = currentState.teacherName,
-                        actorRole = "TEACHER",
+                        actorRole = activeActorRole,
                         previousState = "COMPOSED",
                         newState = "DISPATCHED_TO_LINKED_NUMBERS",
                         remarks = "Computer-generated WhatsApp attendance notices pushed to $dispatchedCount students on linked mobile numbers for ${currentState.selectedClass} on ${currentState.selectedDate}."
@@ -551,10 +554,12 @@ class TeacherAttendanceViewModel @Inject constructor(
         val gradePart = parts.getOrNull(0) ?: "10"
         val sectionPart = parts.getOrNull(1) ?: "A"
 
+        val activeTenant = _uiState.value.institutionId
         val matchingStudents = allStudents.filter { s ->
+            val matchTenant = s.institutionId == activeTenant
             val matchGrade = s.grade.equals(gradePart, ignoreCase = true) || s.grade.contains(gradePart, ignoreCase = true)
             val matchSection = s.section.equals(sectionPart, ignoreCase = true)
-            matchGrade && matchSection
+            matchTenant && matchGrade && matchSection
         }.sortedBy { it.rollNumber }
 
         val isEmpty = matchingStudents.isEmpty()

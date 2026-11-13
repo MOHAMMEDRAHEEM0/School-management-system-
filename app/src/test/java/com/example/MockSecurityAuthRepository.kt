@@ -35,8 +35,12 @@ class MockSecurityAuthRepository : AuthRepository {
     fun setSession(session: UserSession?) {
         _currentSession.value = session
         if (session != null) {
-            SecureSessionManager.saveSession(session)
-            TenantSecurityContext.setContext(session.claims, session.institutionId)
+            if (!session.isExpired) {
+                SecureSessionManager.saveSession(session)
+                TenantSecurityContext.setContext(session.claims, session.institutionId)
+            } else {
+                SecureSessionManager.clearSession()
+            }
             _authState.value = AuthState.Authenticated(session)
         } else {
             SecureSessionManager.clearSession()

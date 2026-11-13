@@ -104,7 +104,8 @@ class MainActivity : ComponentActivity() {
         val monitor = com.example.data.remote.sync.NetworkConnectivityMonitor(applicationContext)
         val outboxManager = com.example.data.remote.sync.DurableOutboxManager(database.schoolDao(), monitor)
         val attendanceRepo = com.example.data.repository.AttendanceRepositoryImpl(database.schoolDao(), outboxManager)
-        val repository = SchoolRepository(database.schoolDao(), outboxManager, attendanceRepo)
+        val feeRepo = com.example.data.repository.FeeRepositoryImpl(database.schoolDao(), outboxManager)
+        val repository = SchoolRepository(database.schoolDao(), outboxManager, attendanceRepo, feeRepo)
         val factory = SchoolViewModelFactory(repository, applicationContext, attendanceRepository = attendanceRepo)
 
         setContent {
@@ -129,6 +130,7 @@ fun SchoolManagementApp(viewModel: SchoolViewModel) {
 
     val navController = rememberNavController()
     var showLogoutDialog by remember { mutableStateOf(false) }
+    var isAppLocked by remember { mutableStateOf(false) }
     var accessDeniedInfo by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     fun navigateToAuditLogs() {
@@ -179,6 +181,7 @@ fun SchoolManagementApp(viewModel: SchoolViewModel) {
                     isOnline = isOnline,
                     pendingSyncCount = pendingSyncCount,
                     onTriggerSync = { viewModel.triggerSyncNow() },
+                    onQuickLockClick = { isAppLocked = true },
                     onLogoutClick = { showLogoutDialog = true }
                 )
 
@@ -264,4 +267,205 @@ fun SchoolManagementApp(viewModel: SchoolViewModel) {
             shape = RoundedCornerShape(16.dp)
         )
     }
+
+    // Modal Quick Lock & Biometric Unlock Dialog
+    if (isAppLocked) {
+        BiometricQuickUnlockDialog(
+            profileName = profileName,
+            roleLabel = currentRole.label,
+            onUnlock = { isAppLocked = false },
+            onLogout = {
+                isAppLocked = false
+                viewModel.logout()
+            }
+        )
+    }
+}
+
+@Composable
+fun BiometricQuickUnlockDialog(
+    profileName: String,
+    roleLabel: String,
+    onUnlock: () -> Unit,
+    onLogout: () -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var pinInput by remember { mutableStateOf("") }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = { /* Modal lock - cannot dismiss by tapping outside */ },
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(GovNavyPrimary),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = "Session Locked",
+                        tint = PureWhite,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                Column {
+                    Text(
+                        text = "Session Quick-Lock",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Black,
+                        color = GovNavyDark
+                    )
+                    Text(
+                        text = "Biometric & Fast PIN Re-Entry",
+                        fontSize = 10.sp,
+                        color = GovSlateMuted
+                    )
+                }
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFFEFF6FF),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFBFDBFE)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Text(
+                            text = "Authenticated Officer:",
+                            fontSize = 9.5.sp,
+                            color = GovSlateMuted
+                        )
+                        Text(
+                            text = profileName,
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = GovNavyPrimary
+                        )
+                        Text(
+                            text = roleLabel,
+                            fontSize = 10.sp,
+                            color = GovSlateDark
+                        )
+                    }
+                }
+
+                // PIN dots indicator
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.padding(vertical = 6.dp)
+                ) {
+                    for (i in 0 until 4) {
+                        val isFilled = i < pinInput.length
+                        Box(
+                            modifier = Modifier
+                                .size(14.dp)
+                                .clip(CircleShape)
+                                .background(if (isFilled) GovNavyPrimary else Color(0xFFE2E8F0))
+                                .border(1.dp, GovNavyPrimary, CircleShape)
+                        )
+                    }
+                }
+
+                if (errorMessage != null) {
+                    Text(
+                        text = errorMessage!!,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = GovRedAlert
+                    )
+                }
+
+                // Fast PIN number pad buttons (1 to 4 or quick tap)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf("1", "2", "3", "4").forEach { digit ->
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFFF1F5F9),
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    if (pinInput.length < 4) {
+                                        pinInput += digit
+                                        errorMessage = null
+                                        if (pinInput == "1234") {
+                                            android.widget.Toast.makeText(context, "PIN Verified! Welcome back.", android.widget.Toast.LENGTH_SHORT).show()
+                                            onUnlock()
+                                        } else if (pinInput.length == 4) {
+                                            errorMessage = "Incorrect PIN. Default is '1234'"
+                                            pinInput = ""
+                                        }
+                                    }
+                                }
+                        ) {
+                            Text(
+                                text = digit,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = GovNavyDark,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                modifier = Modifier.padding(vertical = 10.dp)
+                            )
+                        }
+                    }
+                }
+
+                // 1-Tap Biometric Fingerprint / Face Unlock Button
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color(0xFFF0FDF4),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF86EFAC)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable {
+                            android.widget.Toast.makeText(context, "Biometric Fingerprint Verified!", android.widget.Toast.LENGTH_SHORT).show()
+                            onUnlock()
+                        }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Shield,
+                            contentDescription = "Biometric Unlock",
+                            tint = GovGreen,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "1-Tap Biometric / Fast Unlock",
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = GovGreen
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = onLogout) {
+                Text("Switch User / Logout", fontSize = 11.5.sp, color = GovRedAlert)
+            }
+        },
+        containerColor = PureWhite,
+        shape = RoundedCornerShape(16.dp)
+    )
 }

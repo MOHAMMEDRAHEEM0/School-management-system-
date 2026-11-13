@@ -205,6 +205,15 @@ interface SchoolDao {
     @Query("SELECT * FROM students WHERE admissionNumber = :admissionNo OR id = :admissionNo LIMIT 1")
     suspend fun getStudentByAdmissionNumber(admissionNo: String): StudentEntity?
 
+    @Query("SELECT * FROM students WHERE institutionId = :institutionId AND (name LIKE '%' || :query || '%' OR admissionNumber LIKE '%' || :query || '%' OR grade LIKE '%' || :query || '%' OR section LIKE '%' || :query || '%') ORDER BY grade ASC, section ASC, rollNumber ASC")
+    fun searchStudentsByTenant(institutionId: String, query: String): Flow<List<StudentEntity>>
+
+    @Query("SELECT * FROM students WHERE institutionId = :institutionId AND (name LIKE '%' || :query || '%' OR admissionNumber LIKE '%' || :query || '%') ORDER BY grade ASC, section ASC, rollNumber ASC")
+    suspend fun searchStudentsByTenantList(institutionId: String, query: String): List<StudentEntity>
+
+    @Query("UPDATE students SET feePaid = :paidRupees, feeDue = :dueRupees WHERE id = :studentId AND institutionId = :institutionId")
+    suspend fun updateStudentFeeSummary(studentId: String, institutionId: String, paidRupees: Double, dueRupees: Double)
+
     @Query("SELECT * FROM students WHERE grade = :grade ORDER BY rollNumber ASC")
     fun getStudentsByGrade(grade: String): Flow<List<StudentEntity>>
 
@@ -225,6 +234,9 @@ interface SchoolDao {
 
     @Query("UPDATE students SET attendancePercentage = :newPercentage WHERE id = :studentId")
     suspend fun updateStudentAttendancePercentage(studentId: String, newPercentage: Float)
+
+    @Query("UPDATE students SET attendancePercentage = :newPercentage WHERE id = :studentId AND institutionId = :institutionId")
+    suspend fun updateStudentAttendancePercentageInTenant(studentId: String, institutionId: String, newPercentage: Float)
 
     @Query("UPDATE students SET realIdPhotoUri = :photoUri, convertedDigitalId = :digitalId, digitalIdStatus = :status WHERE id = :studentId")
     suspend fun updateStudentIdCard(studentId: String, photoUri: String?, digitalId: String, status: String)
@@ -250,11 +262,23 @@ interface SchoolDao {
     @Query("SELECT * FROM attendance WHERE classSection = :classSection AND date = :date")
     suspend fun getAttendanceForClassAndDate(classSection: String, date: String): List<AttendanceEntity>
 
+    @Query("SELECT * FROM attendance WHERE institutionId = :institutionId AND classSection = :classSection AND date = :date")
+    suspend fun getAttendanceForClassAndDateInTenant(institutionId: String, classSection: String, date: String): List<AttendanceEntity>
+
     @Query("SELECT * FROM attendance WHERE classSection = :classSection AND date = :date AND session = :session")
     suspend fun getAttendanceForClassDateAndSession(classSection: String, date: String, session: String): List<AttendanceEntity>
 
+    @Query("SELECT * FROM attendance WHERE institutionId = :institutionId AND classSection = :classSection AND date = :date AND session = :session")
+    suspend fun getAttendanceForClassDateAndSessionInTenant(institutionId: String, classSection: String, date: String, session: String): List<AttendanceEntity>
+
     @Query("DELETE FROM attendance WHERE classSection = :classSection AND date = :date")
     suspend fun deleteAttendanceForClassAndDate(classSection: String, date: String)
+
+    @Query("DELETE FROM attendance WHERE institutionId = :institutionId AND classSection = :classSection AND date = :date")
+    suspend fun deleteAttendanceForClassAndDateInTenant(institutionId: String, classSection: String, date: String)
+
+    @Query("DELETE FROM attendance_records WHERE institutionId = :institutionId AND classSection = :classSection AND date = :date AND sourceMethod = 'DAILY_ATTENDANCE_UI'")
+    suspend fun deleteDailyUiAttendanceRecordsForClassAndDateInTenant(institutionId: String, classSection: String, date: String)
 
     @Query("DELETE FROM attendance WHERE classSection = :classSection AND date = :date AND session = :session")
     suspend fun deleteAttendanceForClassDateAndSession(classSection: String, date: String, session: String)
@@ -282,6 +306,9 @@ interface SchoolDao {
 
     @Query("UPDATE attendance_records SET isSyncedToCentral = 1 WHERE classSection = :classSection AND date = :date AND personId = :personId")
     suspend fun markAttendanceRecordSynced(classSection: String, date: String, personId: String)
+
+    @Query("UPDATE attendance_records SET isSyncedToCentral = 1 WHERE institutionId = :institutionId AND classSection = :classSection AND date = :date AND personId = :personId")
+    suspend fun markAttendanceRecordSyncedInTenant(institutionId: String, classSection: String, date: String, personId: String)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAttendanceRecord(record: AttendanceRecordEntity)
@@ -343,6 +370,18 @@ interface SchoolDao {
     @Query("SELECT * FROM fee_records WHERE studentId = :studentId OR admissionNumber = :studentId ORDER BY id ASC")
     fun getFeeRecordsForStudent(studentId: String): Flow<List<FeeRecordEntity>>
 
+    @Query("SELECT * FROM fee_records WHERE id = :feeId LIMIT 1")
+    suspend fun getFeeRecordById(feeId: String): FeeRecordEntity?
+
+    @Query("SELECT * FROM fee_records WHERE institutionId = :institutionId ORDER BY id ASC")
+    suspend fun getFeeRecordsForInstitutionList(institutionId: String): List<FeeRecordEntity>
+
+    @Query("SELECT * FROM fee_records WHERE institutionId = :institutionId AND (studentId = :studentId OR admissionNumber = :studentId) ORDER BY id ASC")
+    suspend fun getFeeRecordsForStudentList(studentId: String, institutionId: String): List<FeeRecordEntity>
+
+    @Query("SELECT * FROM fee_records WHERE institutionId = :institutionId AND (studentId = :studentId OR admissionNumber = :studentId) ORDER BY id ASC")
+    fun getFeeRecordsForStudentInTenant(studentId: String, institutionId: String): Flow<List<FeeRecordEntity>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertFeeRecord(fee: FeeRecordEntity)
 
@@ -357,7 +396,7 @@ interface SchoolDao {
         status: String,
         receipt: String,
         date: String,
-        mode: String = "OFFLINE_ENTRY"
+        mode: String = "CASH"
     )
 
     // =========================================================================
@@ -739,6 +778,22 @@ interface SchoolDao {
     }
 
     @Transaction
+    suspend fun saveDailyAttendanceBatchWithOutboxInTenant(
+        institutionId: String,
+        classSection: String,
+        date: String,
+        attendances: List<AttendanceEntity>,
+        records: List<AttendanceRecordEntity>,
+        outboxItems: List<DurableOutboxEntity>
+    ) {
+        deleteAttendanceForClassAndDateInTenant(institutionId, classSection.trim(), date.trim())
+        deleteDailyUiAttendanceRecordsForClassAndDateInTenant(institutionId, classSection.trim(), date.trim())
+        insertAttendanceList(attendances)
+        insertAttendanceRecords(records)
+        insertOutboxItems(outboxItems)
+    }
+
+    @Transaction
     suspend fun saveDailyAttendanceSessionBatchWithOutbox(
         classSection: String,
         date: String,
@@ -1023,17 +1078,47 @@ interface SchoolDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertFeeStructures(structures: List<FeeStructureEntity>)
 
+    @Query("SELECT * FROM fee_payment_transactions ORDER BY timestamp DESC")
+    fun getAllPaymentTransactions(): Flow<List<FeePaymentTransactionEntity>>
+
     @Query("SELECT * FROM fee_payment_transactions WHERE institutionId = :institutionId ORDER BY timestamp DESC")
     fun getPaymentTransactions(institutionId: String): Flow<List<FeePaymentTransactionEntity>>
 
     @Query("SELECT * FROM fee_payment_transactions WHERE studentId = :studentId ORDER BY timestamp DESC")
     fun getPaymentTransactionsForStudent(studentId: String): Flow<List<FeePaymentTransactionEntity>>
 
+    @Query("SELECT * FROM fee_payment_transactions WHERE institutionId = :institutionId AND studentId = :studentId ORDER BY timestamp DESC")
+    fun getPaymentTransactionsForStudentInTenant(studentId: String, institutionId: String): Flow<List<FeePaymentTransactionEntity>>
+
+    @Query("SELECT * FROM fee_payment_transactions WHERE feeRecordId = :feeRecordId AND institutionId = :institutionId AND status NOT IN ('REFUNDED', 'VOID', 'FAILED') ORDER BY timestamp ASC")
+    suspend fun getConfirmedTransactionsForFeeRecord(feeRecordId: String, institutionId: String): List<FeePaymentTransactionEntity>
+
+    @Query("SELECT * FROM fee_payment_transactions WHERE feeRecordId = :feeRecordId ORDER BY timestamp DESC")
+    suspend fun getPaymentTransactionsForFeeRecordList(feeRecordId: String): List<FeePaymentTransactionEntity>
+
+    @Query("SELECT * FROM fee_payment_transactions WHERE idempotencyKey = :idempotencyKey LIMIT 1")
+    suspend fun getPaymentTransactionByIdempotencyKey(idempotencyKey: String): FeePaymentTransactionEntity?
+
+    @Query("SELECT * FROM fee_payment_transactions WHERE receiptNumber = :receiptNumber LIMIT 1")
+    suspend fun getPaymentTransactionByReceiptNumber(receiptNumber: String): FeePaymentTransactionEntity?
+
+    @Query("SELECT * FROM fee_payment_transactions WHERE transactionId = :transactionId LIMIT 1")
+    suspend fun getPaymentTransactionById(transactionId: String): FeePaymentTransactionEntity?
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertPaymentTransactionStrict(txn: FeePaymentTransactionEntity)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPaymentTransaction(txn: FeePaymentTransactionEntity)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPaymentTransactions(txns: List<FeePaymentTransactionEntity>)
+
+    @Query("UPDATE fee_payment_transactions SET isSyncedToCentral = 1, syncStatus = 'SYNCED', serverAckToken = :ackToken WHERE transactionId = :transactionId")
+    suspend fun markPaymentTransactionSynced(transactionId: String, ackToken: String)
+
+    @Query("UPDATE fee_payment_transactions SET isSyncedToCentral = 0, syncStatus = 'CONFLICT' WHERE transactionId = :transactionId")
+    suspend fun markPaymentTransactionConflict(transactionId: String)
 
     // =========================================================================
     // 22. PUSH NOTIFICATIONS
@@ -1099,6 +1184,20 @@ interface SchoolDao {
     // 26. ATOMIC TRANSACTION WORKFLOWS
     // =========================================================================
     @Transaction
+    suspend fun createFeeAssessmentWithOutbox(
+        fee: FeeRecordEntity,
+        auditLog: AuditLogEntity,
+        outboxItem: DurableOutboxEntity,
+        studentPaidRupees: Double,
+        studentDueRupees: Double
+    ) {
+        insertFeeRecord(fee)
+        updateStudentFeeSummary(fee.studentId, fee.institutionId, studentPaidRupees, studentDueRupees)
+        insertAuditLog(auditLog)
+        insertOutbox(outboxItem)
+    }
+
+    @Transaction
     suspend fun processFeePaymentAtomicWithOutbox(
         feeId: String,
         transaction: FeePaymentTransactionEntity,
@@ -1106,18 +1205,23 @@ interface SchoolDao {
         duePaise: Long,
         status: String,
         auditLog: AuditLogEntity,
-        outboxItem: DurableOutboxEntity
+        outboxItem: DurableOutboxEntity,
+        studentTotalPaidRupees: Double? = null,
+        studentTotalDueRupees: Double? = null
     ) {
-        insertPaymentTransaction(transaction)
+        insertPaymentTransactionStrict(transaction)
         recordFeePayment(
             feeId = feeId,
             paid = paidPaise,
             due = duePaise,
             status = status,
             receipt = transaction.receiptNumber,
-            date = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date(transaction.timestamp)),
+            date = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date(transaction.timestamp)),
             mode = transaction.paymentMode
         )
+        if (studentTotalPaidRupees != null && studentTotalDueRupees != null) {
+            updateStudentFeeSummary(transaction.studentId, transaction.institutionId, studentTotalPaidRupees, studentTotalDueRupees)
+        }
         insertAuditLog(auditLog)
         insertOutbox(outboxItem)
     }
@@ -1138,7 +1242,7 @@ interface SchoolDao {
             due = duePaise,
             status = status,
             receipt = transaction.receiptNumber,
-            date = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date(transaction.timestamp)),
+            date = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date(transaction.timestamp)),
             mode = transaction.paymentMode
         )
         insertAuditLog(auditLog)
@@ -1383,6 +1487,9 @@ interface SchoolDao {
 
     @Query("SELECT * FROM durable_outbox WHERE idempotencyKey = :key LIMIT 1")
     suspend fun getOutboxByIdempotencyKey(key: String): DurableOutboxEntity?
+
+    @Query("SELECT DISTINCT institutionId FROM durable_outbox WHERE status IN ('PENDING', 'RETRYABLE_FAILURE', 'FAILED')")
+    suspend fun getPendingOutboxInstitutionIds(): List<String>
 
     @Query("SELECT COUNT(*) FROM durable_outbox WHERE institutionId = :institutionId AND (status = 'PENDING' OR status = 'FAILED' OR status = 'RETRYABLE_FAILURE' OR status = 'PROCESSING')")
     fun getPendingOutboxCount(institutionId: String): Flow<Int>

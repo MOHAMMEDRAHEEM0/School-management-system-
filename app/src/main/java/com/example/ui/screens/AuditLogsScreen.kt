@@ -60,6 +60,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.components.AttendanceFeeSyncWorkManagerCard
+import com.example.ui.components.DisasterRecoveryBackupCard
 import com.example.ui.components.GlassBadge
 import com.example.ui.components.GlassButton
 import com.example.ui.components.GlassCard
@@ -307,6 +308,13 @@ fun AuditLogsScreen(
 
         // WorkManager Idle & Charging Battery-Preserving Sync Strategy Card
         AttendanceFeeSyncWorkManagerCard(
+            institutionId = "INST-SXA-2026"
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Institutional Encrypted Database Backup & Disaster Recovery Drill Card
+        DisasterRecoveryBackupCard(
             institutionId = "INST-SXA-2026"
         )
 

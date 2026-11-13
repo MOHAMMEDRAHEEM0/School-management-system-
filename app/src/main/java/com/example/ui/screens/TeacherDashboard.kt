@@ -103,7 +103,14 @@ fun TeacherDashboard(
     val context = LocalContext.current
     var selectedTab by remember { mutableIntStateOf(0) }
 
+    val userClaims by viewModel.userClaims.collectAsState()
+    val authSession by viewModel.currentAuthSession.collectAsState()
+    val verifiedInst by viewModel.verifiedInstitution.collectAsState()
+    val activeTenantId = verifiedInst?.institutionId ?: authSession?.institution?.institutionId ?: "INST-SXA-2026"
+    val vmKey = "teach_${userClaims?.userId ?: authSession?.user?.id ?: "anon"}_${activeTenantId}"
+
     val attendanceViewModel: TeacherAttendanceViewModel = viewModel(
+        key = vmKey,
         factory = TeacherAttendanceViewModelFactory(
             attendanceRepository = viewModel.attendanceRepository,
             schoolRepository = viewModel.repository
@@ -115,8 +122,8 @@ fun TeacherDashboard(
     val diaryEntries by viewModel.diaryEntries.collectAsState()
     val timetableSlots by viewModel.timetableSlots.collectAsState()
 
-    // 10-A scholars
-    val classStudents = students.filter { it.section == "A" }
+    // Class scholars scoped to active tenant
+    val classStudents = students.filter { it.institutionId == activeTenantId && it.section == "A" }
 
     // Dialog for Marks Entry
     var showMarksDialog by remember { mutableStateOf(false) }

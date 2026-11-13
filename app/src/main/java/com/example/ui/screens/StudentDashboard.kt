@@ -682,8 +682,7 @@ fun StudentDashboard(
                             )
                         }
                     }
-                } else {
-                    // Gateway Checkout Console
+                    // Online Gateway Not Configured Notice (No simulated client payment success)
                     Surface(
                         shape = RoundedCornerShape(12.dp),
                         color = PureWhite,
@@ -692,138 +691,17 @@ fun StudentDashboard(
                     ) {
                         Column(modifier = Modifier.padding(14.dp)) {
                             Text(
-                                text = "Zero-Trust Payment Gateway Checkout:",
+                                text = "Online Payment Gateway Not Configured",
                                 fontSize = 12.5.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = GovNavyDark
                             )
+                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "No API keys, card details, or UPI PINs stored in app. Backend verifiable transactions.",
-                                fontSize = 9.5.sp,
+                                text = "Self-service online gateway checkout is disabled because no verified merchant gateway provider is configured in this build. Please pay at the Accounts Counter; manually recorded receipts issued by the Accountant or Principal will appear in your Treasury tab.",
+                                fontSize = 11.sp,
                                 color = GovSlateMuted
                             )
-
-                            Spacer(modifier = Modifier.height(10.dp))
-
-                            // Provider Selector
-                            Text("Select Payment Gateway Provider:", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = GovSlateDark)
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                listOf(PaymentGatewayProvider.RAZORPAY, PaymentGatewayProvider.CASHFREE).forEach { prov ->
-                                    val isSelected = selectedFeeGateway == prov
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = if (isSelected) GovNavyPrimary.copy(alpha = 0.1f) else Color(0xFFF8FAFC),
-                                        border = androidx.compose.foundation.BorderStroke(1.dp, if (isSelected) GovNavyPrimary else Color(0xFFE2E8F0)),
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .clickable { selectedFeeGateway = prov }
-                                    ) {
-                                        Column(
-                                            modifier = Modifier.padding(8.dp),
-                                            horizontalAlignment = Alignment.CenterHorizontally
-                                        ) {
-                                            Text(prov.name, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = if (isSelected) GovNavyPrimary else GovSlateDark)
-                                            Text("Gateway", fontSize = 8.5.sp, color = GovSlateMuted)
-                                        }
-                                    }
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(12.dp))
-
-                            if (activeStudentOrder == null) {
-                                GlassButton(
-                                    text = "Initiate Secure Checkout Order",
-                                    onClick = {
-                                        val order = studentPaymentGateway.createPaymentOrder(
-                                            tenantId = "INST-SXA-2026",
-                                            studentId = student.admissionNumber,
-                                            studentName = student.name,
-                                            feeRecordId = "FEE-2026-001",
-                                            term = "Term 1 Composite Tuition",
-                                            amountPaise = 1500000L,
-                                            idempotencyKey = UUID.randomUUID().toString(),
-                                            provider = selectedFeeGateway
-                                        )
-                                        activeStudentOrder = order
-                                        Toast.makeText(context, "Order ${order.internalOrderId} initiated!", Toast.LENGTH_SHORT).show()
-                                    },
-                                    color = GovNavyPrimary,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            } else {
-                                val order = activeStudentOrder!!
-                                val upiUri = UpiPaymentIntent.buildUpiUri(
-                                    payeeVpa = "fees.${order.tenantId.lowercase().replace("-", "")}@icici",
-                                    payeeName = "St. Xavier's International Academy",
-                                    orderId = order.internalOrderId,
-                                    amountRupees = order.amountRupees,
-                                    note = "Fee - ${order.receiptNumber}"
-                                )
-
-                                Surface(shape = RoundedCornerShape(8.dp), color = Color(0xFFF1F5F9), modifier = Modifier.fillMaxWidth()) {
-                                    Column(modifier = Modifier.padding(10.dp)) {
-                                        Text("Order ID: ${order.internalOrderId}", fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = GovNavyPrimary)
-                                        Text("Invoice ID: ${order.internalInvoiceId} • Payable: ₹${order.amountRupees}", fontSize = 9.5.sp, color = GovSlateDark)
-                                        Text("UPI Intent: $upiUri", fontSize = 8.5.sp, fontFamily = FontFamily.Monospace, color = GovSlateMuted)
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(10.dp))
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    GlassButton(
-                                        text = "Open UPI App",
-                                        onClick = {
-                                            try {
-                                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(upiUri))
-                                                context.startActivity(intent)
-                                            } catch (e: Exception) {
-                                                Toast.makeText(context, "UPI URI verified. (Use simulator below)", Toast.LENGTH_SHORT).show()
-                                            }
-                                        },
-                                        color = GovGreen,
-                                        modifier = Modifier.weight(1f)
-                                    )
-
-                                    GlassButton(
-                                        text = "Complete Payment (HMAC)",
-                                        onClick = {
-                                            val paymentId = "pay_stu_${System.currentTimeMillis().toString().takeLast(6)}"
-                                            val secret = "rzp_test_secret_key_prod_2026"
-                                            val signature = studentPaymentGateway.computeHmacSha256("${order.gatewayOrderId}|$paymentId", secret)
-                                            val req = PaymentVerificationRequest(
-                                                internalOrderId = order.internalOrderId,
-                                                gatewayOrderId = order.gatewayOrderId ?: "gw_ord_1",
-                                                gatewayPaymentId = paymentId,
-                                                gatewaySignature = signature,
-                                                tenantId = order.tenantId
-                                            )
-                                            val result = studentPaymentGateway.verifyPayment(req, secret)
-                                            if (result.isVerified) {
-                                                isFeePaidSuccessfully = true
-                                                paymentReceiptNo = result.receiptNumber
-                                                viewModel.inchargeRecordFeePayment(
-                                                    feeId = "FEE-2026-001",
-                                                    paidAmount = 15000L,
-                                                    dueAmount = 0L,
-                                                    receiptNo = result.receiptNumber ?: "RCP-9901"
-                                                )
-                                                Toast.makeText(context, "Payment verified! Receipt: ${result.receiptNumber}", Toast.LENGTH_LONG).show()
-                                            }
-                                        },
-                                        color = GovNavyPrimary,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                }
-                            }
                         }
                     }
                 }

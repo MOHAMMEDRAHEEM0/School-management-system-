@@ -75,7 +75,7 @@ exports.onUserCreated = functions.auth.user().onCreate(async (user) => {
   await auth.setCustomUserClaims(user.uid, safeClaims);
 
   // Store profile in tenant user collection
-  await db.doc(`institutions/${userTenant}/users/${user.uid}`).set({
+  await db.doc(`tenants/${userTenant}/users/${user.uid}`).set({
     userId: user.uid,
     email: email,
     displayName: user.displayName || email.split("@")[0],
@@ -104,7 +104,7 @@ exports.switchSchoolTenant = functions.https.onCall(async (data, context) => {
   }
 
   // 1. Verify membership in the target tenant collection
-  const targetUserDoc = await db.doc(`institutions/${targetTenantId}/users/${callerUid}`).get();
+  const targetUserDoc = await db.doc(`tenants/${targetTenantId}/users/${callerUid}`).get();
   const isSuperAdmin = context.auth.token.isSuperAdmin === true;
 
   if (!targetUserDoc.exists && !isSuperAdmin) {
@@ -187,7 +187,7 @@ exports.setUserRoleAndPermissions = functions.https.onCall(async (data, context)
   }
 
   // Verify target user belongs to caller's tenant (prevents cross-tenant role tampering)
-  const targetUserRef = db.doc(`institutions/${callerTenantId}/users/${targetUserId}`);
+  const targetUserRef = db.doc(`tenants/${callerTenantId}/users/${targetUserId}`);
   const targetDoc = await targetUserRef.get();
 
   if (!targetDoc.exists) {
@@ -220,7 +220,7 @@ exports.setUserRoleAndPermissions = functions.https.onCall(async (data, context)
   });
 
   // Append immutable audit log
-  await db.collection(`institutions/${callerTenantId}/audit_logs`).add({
+  await db.collection(`tenants/${callerTenantId}/audit_logs`).add({
     institutionId: callerTenantId,
     action: "ROLE_CHANGE",
     entityType: "UserEntity",
@@ -261,7 +261,7 @@ exports.toggleAccountDisabled = functions.https.onCall(async (data, context) => 
     throw new functions.https.HttpsError("permission-denied", "Cannot disable your own administrative account.");
   }
 
-  const targetUserRef = db.doc(`institutions/${callerTenantId}/users/${targetUserId}`);
+  const targetUserRef = db.doc(`tenants/${callerTenantId}/users/${targetUserId}`);
   const targetDoc = await targetUserRef.get();
   if (!targetDoc.exists) {
     throw new functions.https.HttpsError("not-found", "Target user not found in institution.");
@@ -326,20 +326,142 @@ exports.verifyPaymentWebhook = functions.https.onRequest(async (req, res) => {
     const invoiceId = paymentEntity.notes?.invoiceId;
 
     // Record verified transaction with immutable server status
-    await db.collection(`institutions/${institutionId}/payment_transactions`).doc(paymentEntity.id).set({
+    await db.collection(`tenants/${institutionId}/payment_transactions`).doc(paymentEntity.id).set({
       transactionId: paymentEntity.id,
       institutionId: institutionId,
+      tenantId: institutionId,
       studentId: studentId || "UNKNOWN_STUDENT",
-      invoiceId: invoiceId || "GENERAL_FEE",
-      amountPaise: paymentEntity.amount,
+      feeRecordId: invoiceId || "GENERAL_FEE",
+      amountPaidPaise: paymentEntity.amount,
       currency: paymentEntity.currency || "INR",
-      status: "SUCCESS", // Authoritative server-verified status
-      paymentMode: paymentEntity.method || "ONLINE",
+      status: "GATEWAY_VERIFIED",
+      verificationSource: "GATEWAY_VERIFIED",
+      paymentMode: paymentEntity.method || "GATEWAY_ONLINE",
       timestamp: Date.now()
     });
   }
 
   return res.status(200).json({ status: "acknowledged" });
+});
+
+// Trusted server callable for idempotent manual fee recording & balance reconciliation
+exports.recordManualFeePayment = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "Authentication required.");
+  }
+
+  const callerTenantId = context.auth.token.tenantId;
+  const callerRole = normalizeRole(context.auth.token.role);
+  if (!callerTenantId || !["ADMIN", "PRINCIPAL", "ACCOUNTANT"].includes(callerRole)) {
+    throw new functions.https.HttpsError(
+      "permission-denied",
+      "Only authorized Accountant, Principal, or Admin may record institutional fee payments."
+    );
+  }
+
+  const { studentId, feeRecordId, amountPaise, paymentMode, transactionReference, receiptNumber, idempotencyKey } = data || {};
+  if (!studentId || !feeRecordId || !Number.isInteger(amountPaise) || amountPaise <= 0 || !receiptNumber || !idempotencyKey) {
+    throw new functions.https.HttpsError("invalid-argument", "Valid studentId, feeRecordId, integer amountPaise (>0), receiptNumber, and idempotencyKey are required.");
+  }
+
+  const ALLOWED_MANUAL = new Set(["CASH", "CHEQUE", "BANK_TRANSFER", "UPI_MANUAL", "DD"]);
+  const normalizedMode = String(paymentMode || "").trim().toUpperCase();
+  if (!ALLOWED_MANUAL.has(normalizedMode)) {
+    throw new functions.https.HttpsError("invalid-argument", `Unsupported manual counter payment mode: ${paymentMode}`);
+  }
+  const cleanRef = String(transactionReference || "").trim();
+  if (normalizedMode !== "CASH" && !cleanRef) {
+    throw new functions.https.HttpsError("invalid-argument", `Transaction reference is required for ${normalizedMode} payments.`);
+  }
+
+  const feeRef = db.doc(`tenants/${callerTenantId}/fee_invoices/${feeRecordId}`);
+  const txnCollection = db.collection(`tenants/${callerTenantId}/payment_transactions`);
+
+  return await db.runTransaction(async (tx) => {
+    const dupKeyQuery = await tx.get(txnCollection.where("idempotencyKey", "==", String(idempotencyKey)).limit(1));
+    if (!dupKeyQuery.empty) {
+      throw new functions.https.HttpsError("already-exists", "Duplicate payment prevented: idempotency key already committed.");
+    }
+    const dupReceiptQuery = await tx.get(txnCollection.where("receiptNumber", "==", String(receiptNumber)).limit(1));
+    if (!dupReceiptQuery.empty) {
+      throw new functions.https.HttpsError("already-exists", `Duplicate receipt number prevented: ${receiptNumber}`);
+    }
+
+    const feeDoc = await tx.get(feeRef);
+    if (!feeDoc.exists) {
+      throw new functions.https.HttpsError("not-found", "Fee invoice not found in caller tenant.");
+    }
+    const feeData = feeDoc.data();
+    if (feeData.studentId && feeData.studentId !== String(studentId)) {
+      throw new functions.https.HttpsError("failed-precondition", "Fee invoice does not belong to specified student.");
+    }
+    const confirmedTxnsSnap = await tx.get(txnCollection.where("feeRecordId", "==", feeRecordId));
+    let paidPaise = 0;
+    confirmedTxnsSnap.forEach((docSnap) => {
+      const d = docSnap.data();
+      if (!["REFUNDED", "VOID", "FAILED"].includes(d.status)) {
+        paidPaise += Number(d.amountPaidPaise || 0);
+      }
+    });
+
+    const totalPaise = Number(feeData.totalAmountPaise || feeData.totalAmount || 0);
+    const outstanding = Math.max(0, totalPaise - paidPaise);
+    if (amountPaise > outstanding) {
+      throw new functions.https.HttpsError("failed-precondition", "Payment amount exceeds current outstanding balance.");
+    }
+
+    const newPaid = paidPaise + amountPaise;
+    const newDue = Math.max(0, totalPaise - newPaid);
+    const newStatus = newDue === 0 ? "PAID" : "PARTIAL";
+    const transactionId = `TXN-${Date.now()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+
+    tx.set(txnCollection.doc(transactionId), {
+      transactionId,
+      tenantId: callerTenantId,
+      institutionId: callerTenantId,
+      feeRecordId,
+      studentId,
+      amountPaidPaise: amountPaise,
+      paymentMode: normalizedMode,
+      transactionReference: String(transactionReference || ""),
+      receiptNumber: String(receiptNumber),
+      recordedByUserId: context.auth.uid,
+      recordedByRole: callerRole,
+      verificationSource: "MANUAL_RECORDED",
+      status: "RECORDED_MANUAL",
+      idempotencyKey: String(idempotencyKey),
+      timestamp: Date.now(),
+      serverTimestamp: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    tx.set(feeRef, {
+      paidAmountPaise: newPaid,
+      dueAmountPaise: newDue,
+      status: newStatus,
+      lastReceiptNumber: String(receiptNumber),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    const auditRef = db.collection(`tenants/${callerTenantId}/audit_logs`).doc();
+    tx.set(auditRef, {
+      institutionId: callerTenantId,
+      tenantId: callerTenantId,
+      action: "MANUAL_FEE_PAYMENT_RECORDED",
+      entityType: "FeePaymentTransaction",
+      entityId: transactionId,
+      actorUserId: context.auth.uid,
+      actorRole: callerRole,
+      timestamp: Date.now()
+    });
+
+    return {
+      success: true,
+      transactionId,
+      receiptNumber,
+      verificationSource: "MANUAL_RECORDED",
+      outstandingBalancePaise: newDue
+    };
+  });
 });
 
 // =============================================================================

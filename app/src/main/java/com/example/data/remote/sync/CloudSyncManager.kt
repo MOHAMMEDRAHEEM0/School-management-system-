@@ -87,11 +87,9 @@ class CloudSyncManager(
             val auth = runCatching { FirebaseAuth.getInstance() }.getOrNull()
             val currentUser = auth?.currentUser
             val isLiveFirebase = runCatching {
-                val apps = FirebaseApp.getApps(com.example.SchoolApplication())
-                if (apps.isEmpty()) false else {
-                    val key = apps[0].options.apiKey
-                    key.isNotBlank() && !key.startsWith("AIzaSyMock")
-                }
+                val app = FirebaseApp.getInstance()
+                val key = app.options.apiKey
+                key.isNotBlank() && !key.startsWith("AIzaSyMock")
             }.getOrDefault(false)
 
             var syncedCount = 0
